@@ -9,6 +9,9 @@ import { existsSync } from 'fs';
 import { createChangelogXML } from './utils/xml.js';
 import { basename } from 'path';
 import { executeLiquibaseCommand, validateLiquibaseSetup } from './controllers/liquibase.js';
+import prettier from 'prettier';
+import xml2js from 'xml2js';
+import { v4 as uuidv4 } from 'uuid';
 
 const execAsync = promisify(exec);
 
@@ -553,10 +556,9 @@ app.post('/api/check-sql-exists', async (req, res) => {
 });
 
 app.post('/api/apply-fix', async (req, res) => {
+  const { action, details } = req.body;
+  
   try {
-    const { action, details } = req.body;
-    console.log('Received action:', action, 'with details:', details);
-
     switch (action) {
       case 'create-referenced-file': {
         const { xmlFile, category, workingDirectory } = details;
@@ -585,38 +587,28 @@ app.post('/api/apply-fix', async (req, res) => {
       }
       
       case 'add-to-changelog': {
-        const { xmlFile, category, workingDirectory, version } = details;
-        const masterChangelog = `changelog-${version}-${category.toUpperCase()}.xml`;
-        const masterPath = join(workingDirectory, masterChangelog);
+        const { xmlFile, changelogFile, workingDirectory } = details;
+        const changelogPath = join(workingDirectory, changelogFile);
         
         // Read existing content
-        let content = '';
-        if (existsSync(masterPath)) {
-          content = await fs.readFile(masterPath, 'utf-8');
-        }
+        let content = await fs.readFile(changelogPath, 'utf8');
         
-        // Find position to insert new include
+        // Find the closing tag position
         const closingTagIndex = content.lastIndexOf('</databaseChangeLog>');
+        
         if (closingTagIndex === -1) {
-          // Create new changelog if it doesn't exist
-          content = `<?xml version="1.0" encoding="UTF-8"?>
-<databaseChangeLog
-    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
-                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.3.xsd">
-`;
-        } else {
-          // Remove closing tag
-          content = content.substring(0, closingTagIndex);
+          throw new Error('Invalid changelog format');
         }
         
-        // Add new include
-        content += `    <include file="${category}/${xmlFile}" relativeToChangelogFile="true"/>\n</databaseChangeLog>`;
+        // Insert new include before closing tag
+        const newContent = content.slice(0, closingTagIndex) +
+          `    <include file="${xmlFile}" relativeToChangelogFile="true"/>\n` +
+          content.slice(closingTagIndex);
         
         // Write updated content
-        await fs.writeFile(masterPath, content);
-        console.log('Updated changelog:', masterPath);
+        await fs.writeFile(changelogPath, newContent);
+        
+        res.json({ success: true });
         break;
       }
       
@@ -636,49 +628,219 @@ app.post('/api/apply-fix', async (req, res) => {
       }
       
       case 'add-to-main-changelog': {
-        const { categoryChangelog, workingDirectory } = details;
+        const { changelogFile, workingDirectory } = details;
         const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
         
-        let content = '';
-        if (existsSync(mainChangelogPath)) {
-          content = await fs.readFile(mainChangelogPath, 'utf-8');
-          
-          // Find position to insert new include
-          const closingTagIndex = content.lastIndexOf('</databaseChangeLog>');
-          if (closingTagIndex !== -1) {
-            content = content.substring(0, closingTagIndex);
-          }
-        } else {
-          // Create new main changelog if it doesn't exist
-          content = `<?xml version="1.0" encoding="UTF-8"?>
-<databaseChangeLog
-    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
-                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.3.xsd">
-    
-    <!-- Definition de la version -->
-    <include file="tag-database.xml" relativeToChangelogFile="true"/>
-
-`;
+        // Read existing content
+        const content = await fs.readFile(mainChangelogPath, 'utf8');
+        
+        // Find the closing tag position
+        const closingTagIndex = content.lastIndexOf('</databaseChangeLog>');
+        
+        if (closingTagIndex === -1) {
+          throw new Error('Invalid main changelog format');
         }
         
-        // Add new include
-        content += `    <include file="${categoryChangelog}" relativeToChangelogFile="true"/>\n</databaseChangeLog>`;
+        // Insert new include before closing tag
+        const newContent = content.slice(0, closingTagIndex) +
+          `    <include file="${changelogFile}" relativeToChangelogFile="true"/>\n` +
+          content.slice(closingTagIndex);
         
         // Write updated content
-        await fs.writeFile(mainChangelogPath, content);
-        console.log('Updated main changelog:', mainChangelogPath);
+        await fs.writeFile(mainChangelogPath, newContent);
+        
+        res.json({ success: true });
         break;
       }
       
-      default:
-        throw new Error(`Unknown action: ${action}`);
-    }
+      case 'fix-xml-format': {
+        const { xmlFile, workingDirectory } = details;
+        const xmlPath = join(workingDirectory, xmlFile);
+        
+        // Read the XML file
+        const content = await fs.readFile(xmlPath, 'utf8');
+        
+        // Use prettier to format XML
+        const formatted = prettier.format(content, {
+          parser: 'xml',
+          xmlWhitespaceSensitivity: 'ignore',
+          printWidth: 100
+        });
+        
+        // Write back formatted content
+        await fs.writeFile(xmlPath, formatted);
+        res.json({ success: true });
+        break;
+      }
 
-    res.json({ success: true });
+      case 'fix-sql-format': {
+        const { sqlFile, workingDirectory } = details;
+        const sqlPath = join(workingDirectory, sqlFile);
+        
+        // Read the SQL file
+        const content = await fs.readFile(sqlPath, 'utf8');
+        
+        // Use sql-formatter to format SQL
+        const formatted = sqlFormatter.format(content, {
+          language: 'postgresql',
+          uppercase: true
+        });
+        
+        // Write back formatted content
+        await fs.writeFile(sqlPath, formatted);
+        res.json({ success: true });
+        break;
+      }
+
+      case 'remove-duplicate-entry': {
+        const { entry, changelogFile, workingDirectory } = details;
+        const changelogPath = join(workingDirectory, changelogFile);
+        
+        // Read changelog content
+        const content = await fs.readFile(changelogPath, 'utf8');
+        
+        // Parse XML
+        const parser = new xml2js.Parser();
+        const result = await parser.parseStringPromise(content);
+        
+        // Remove duplicate entries
+        const seen = new Set();
+        result.databaseChangeLog.changeSet = result.databaseChangeLog.changeSet.filter(changeSet => {
+          const key = JSON.stringify(changeSet);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        
+        // Build XML
+        const builder = new xml2js.Builder();
+        const xml = builder.buildObject(result);
+        
+        // Write back to file
+        await fs.writeFile(changelogPath, xml);
+        res.json({ success: true });
+        break;
+      }
+
+      case 'fix-version-number': {
+        const { changelogFile, workingDirectory } = details;
+        const oldPath = join(workingDirectory, changelogFile);
+        
+        // Extract current version from tag-database.xml
+        const tagPath = join(workingDirectory, 'tag-database.xml');
+        const tagContent = await fs.readFile(tagPath, 'utf8');
+        const versionMatch = tagContent.match(/tag="(\d+)/);
+        const correctVersion = versionMatch ? versionMatch[1] : '49';
+        
+        // Create new filename with correct version
+        const newFile = changelogFile.replace(/changelog-\d+/, `changelog-${correctVersion}`);
+        const newPath = join(workingDirectory, newFile);
+        
+        // Rename file
+        await fs.rename(oldPath, newPath);
+        
+        // Update references in main changelog
+        const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
+        let mainContent = await fs.readFile(mainChangelogPath, 'utf8');
+        mainContent = mainContent.replace(changelogFile, newFile);
+        await fs.writeFile(mainChangelogPath, mainContent);
+        
+        res.json({ success: true });
+        break;
+      }
+
+      case 'fix-category-name': {
+        const { changelogFile, workingDirectory } = details;
+        const oldPath = join(workingDirectory, changelogFile);
+        
+        // Extract version and fix category name
+        const match = changelogFile.match(/changelog-(\d+)-([^.]+)/);
+        if (!match) throw new Error('Invalid changelog filename format');
+        
+        const [, version, category] = match;
+        const correctCategory = category.toUpperCase();
+        
+        // Create new filename
+        const newFile = `changelog-${version}-${correctCategory}.xml`;
+        const newPath = join(workingDirectory, newFile);
+        
+        // Rename file
+        await fs.rename(oldPath, newPath);
+        
+        // Update references in main changelog
+        const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
+        let mainContent = await fs.readFile(mainChangelogPath, 'utf8');
+        mainContent = mainContent.replace(changelogFile, newFile);
+        await fs.writeFile(mainChangelogPath, mainContent);
+        
+        res.json({ success: true });
+        break;
+      }
+
+      case 'add-orphaned-xml': {
+        const { xmlFile, workingDirectory } = details;
+        const category = xmlFile.split('/')[0];
+        const version = '49'; // Default version
+        
+        // Add to appropriate changelog
+        const changelogPath = join(workingDirectory, `changelog-${version}-${category.toUpperCase()}.xml`);
+        let changelogContent = await fs.readFile(changelogPath, 'utf8');
+        
+        // Add include before closing tag
+        const closingIndex = changelogContent.lastIndexOf('</databaseChangeLog>');
+        const newContent = changelogContent.slice(0, closingIndex) +
+          `    <include file="${xmlFile}" relativeToChangelogFile="true"/>\n` +
+          changelogContent.slice(closingIndex);
+        
+        await fs.writeFile(changelogPath, newContent);
+        res.json({ success: true });
+        break;
+      }
+
+      case 'remove-orphaned-xml': {
+        const { xmlFile, workingDirectory } = details;
+        const xmlPath = join(workingDirectory, xmlFile);
+        
+        // Remove the file
+        await fs.unlink(xmlPath);
+        res.json({ success: true });
+        break;
+      }
+
+      case 'add-required-attributes': {
+        const { xmlFile, workingDirectory } = details;
+        const xmlPath = join(workingDirectory, xmlFile);
+        
+        // Read XML content
+        const content = await fs.readFile(xmlPath, 'utf8');
+        
+        // Parse XML
+        const parser = new xml2js.Parser();
+        const result = await parser.parseStringPromise(content);
+        
+        // Add required attributes if missing
+        if (result.databaseChangeLog.changeSet) {
+          result.databaseChangeLog.changeSet.forEach(changeSet => {
+            if (!changeSet.$.id) changeSet.$.id = uuidv4();
+            if (!changeSet.$.author) changeSet.$.author = 'system';
+          });
+        }
+        
+        // Build XML
+        const builder = new xml2js.Builder();
+        const xml = builder.buildObject(result);
+        
+        // Write back to file
+        await fs.writeFile(xmlPath, xml);
+        res.json({ success: true });
+        break;
+      }
+
+      default:
+        res.status(400).json({ error: 'Unknown action type' });
+    }
   } catch (error) {
-    console.error('Server error applying fix:', error);
+    console.error('Failed to apply fix:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -761,6 +923,78 @@ app.post('/api/liquibase', async (req, res) => {
     res.status(500).json({
       error: error.message,
       logs: error.stderr?.split('\n').filter(Boolean)
+    });
+  }
+});
+
+app.post('/api/check-changelog-declarations', async (req, res) => {
+  const { workingDirectory, version } = req.body;
+  const logs = [];
+  let errors = 0;
+
+  try {
+    // Read main changelog
+    const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
+    if (!existsSync(mainChangelogPath)) {
+      logs.push({
+        type: 'error',
+        category: 'system',
+        message: 'Main changelog (changelog-SIO2-all.xml) not found'
+      });
+      errors++;
+      return res.json({ logs, errors });
+    }
+
+    const mainContent = await fs.readFile(mainChangelogPath, 'utf8');
+    
+    // Extract all declared changelogs
+    const includeRegex = /<include.*?file="(changelog-\d+-[A-Z_]+\.xml)".*?\/>/g;
+    const declaredChangelogs = new Set();
+    let match;
+    
+    while ((match = includeRegex.exec(mainContent)) !== null) {
+      declaredChangelogs.add(match[1]);
+    }
+
+    // Check for existing changelog files that should be declared
+    const files = await fs.readdir(workingDirectory);
+    const changelogPattern = new RegExp(`changelog-${version}-[A-Z_]+\\.xml$`);
+    
+    for (const file of files) {
+      if (file !== 'changelog-SIO2-all.xml' && 
+          file !== 'tag-database.xml' && 
+          changelogPattern.test(file)) {
+        
+        if (!declaredChangelogs.has(file)) {
+          logs.push({
+            type: 'error',
+            category: 'system',
+            message: `Changelog file '${file}' exists but is not declared in changelog-SIO2-all.xml`
+          });
+          errors++;
+        }
+      }
+    }
+
+    // Success message if no issues found
+    if (errors === 0) {
+      logs.push({
+        type: 'success',
+        category: 'system',
+        message: 'All changelog files are properly declared'
+      });
+    }
+
+    res.json({ logs, errors });
+  } catch (error) {
+    console.error('Error checking changelog declarations:', error);
+    res.status(500).json({ 
+      logs: [{
+        type: 'error',
+        category: 'system',
+        message: `Failed to check changelog declarations: ${error.message}`
+      }],
+      errors: 1
     });
   }
 });

@@ -58,6 +58,31 @@ export class StructureChecker {
       totalErrors++;
     }
 
+    // Add new check for changelog declarations
+    try {
+      const response = await fetch('http://localhost:3000/api/check-changelog-declarations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          workingDirectory: this.workingDirectory,
+          version: this.version
+        })
+      });
+
+      const declarationResults = await response.json();
+      totalErrors += declarationResults.errors;
+      declarationResults.logs.forEach(log => onLog(log));
+    } catch (error) {
+      onLog({ 
+        type: 'error', 
+        category: 'system', 
+        message: `Failed to check changelog declarations: ${error.message}` 
+      });
+      totalErrors++;
+    }
+
     // Check each category
     for (const category of this.CATEGORIES) {
       onLog({ 

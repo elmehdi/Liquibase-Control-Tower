@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Plus, PlusCircle, Trash2, FolderGit2, Upload, Code2, Terminal, ChevronDown } from 'lucide-react';
+import { CategoryInput } from './CategoryInput';
 
 interface GeneratorProps {
   workingDirectory: string;
@@ -11,13 +12,13 @@ interface SQLFileWithContent {
 }
 
 export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
-  const categories = [
+  const [categories, setCategories] = useState([
     { name: 'tables', label: 'Tables' },
     { name: 'views', label: 'Views' },
     { name: 'materialized_views', label: 'Materialized Views' },
     { name: 'procedures', label: 'Procedures' },
     { name: 'sequences', label: 'Sequences' }
-  ];
+  ]);
 
   const [author, setAuthor] = useState('');
   const [version, setVersion] = useState('');
@@ -49,6 +50,7 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
 
   const [sqlContent, setSqlContent] = useState('');
   const [showVersionInput, setShowVersionInput] = useState(false);
+  const [showCategoryInput, setShowCategoryInput] = useState(false);
 
   const toggleCategory = (categoryName: string) => {
     setExpandedCategories(prev => 
@@ -236,6 +238,25 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
     }
   };
 
+  const handleAddCategory = (newCategoryName: string) => {
+    const formattedName = newCategoryName.toLowerCase().replace(/\s+/g, '_');
+    const newCategory = {
+      name: formattedName,
+      label: newCategoryName
+    };
+    
+    setCategories(prev => [...prev, newCategory]);
+    setCategoryFiles(prev => ({
+      ...prev,
+      [formattedName]: []
+    }));
+    setNewFileNames(prev => ({
+      ...prev,
+      [formattedName]: ''
+    }));
+    setShowCategoryInput(false);
+  };
+
   return (
     <div className="container mx-auto px-4">
       {/* Header section */}
@@ -333,6 +354,31 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
       <div className="flex gap-6">
         {/* Categories grid */}
         <div className="flex-grow">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold text-gray-800">Categories</h3>
+            <button
+              onClick={() => setShowCategoryInput(true)}
+              className="px-3 py-1 bg-green-100 text-green-700 rounded
+                       hover:bg-green-200 focus:outline-none focus:ring-2
+                       focus:ring-green-500 focus:ring-offset-1
+                       flex items-center gap-2"
+            >
+              <span>Add Category</span>
+              <PlusCircle size={20} className="h-5 w-5" />
+            </button>
+          </div>
+
+          {showCategoryInput && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg">
+                <CategoryInput 
+                  onAdd={handleAddCategory}
+                  onCancel={() => setShowCategoryInput(false)}
+                />
+              </div>
+            </div>
+          )}
+
           <div className="grid gap-4 md:grid-cols-2">
             {categories.map((category) => (
               <div key={category.name} 
