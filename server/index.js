@@ -8,6 +8,7 @@ import { promisify } from 'util';
 import { existsSync } from 'fs';
 import { createChangelogXML } from './utils/xml.js';
 import { basename } from 'path';
+import { executeLiquibaseCommand, validateLiquibaseSetup } from './controllers/liquibase.js';
 
 const execAsync = promisify(exec);
 
@@ -204,7 +205,41 @@ app.post('/api/check-orphaned', async (req, res) => {
 
   try {
     const masterChangelog = `changelog-${version}-${category.toUpperCase()}.xml`;
+    const masterPath = join(workingDirectory, masterChangelog);
     
+    // Get all declared files from master changelog first
+    let declaredFiles = new Set();
+    if (await fs.access(masterPath).then(() => true).catch(() => false)) {
+      const content = await fs.readFile(masterPath, 'utf-8');
+      const matches = content.match(/file="[^"]+"/g) || [];
+      declaredFiles = new Set(matches.map(m => {
+        const match = m.match(/file="([^"]+)"/);
+        return match ? match[1] : null;
+      }).filter(Boolean));
+    }
+
+    // Check for XML files that exist but aren't declared in changelog
+    const categoryDir = join(workingDirectory, category);
+    if (await fs.access(categoryDir).then(() => true).catch(() => false)) {
+      const xmlFiles = (await fs.readdir(categoryDir))
+        .filter(f => f.endsWith('.xml') && !f.startsWith('changelog-'));
+      
+      for (const xmlFile of xmlFiles) {
+        const relativePath = `${category}/${xmlFile}`;
+        const shortPath = xmlFile;
+        
+        // Check if either the full path or short path is declared
+        if (!declaredFiles.has(relativePath) && !declaredFiles.has(shortPath)) {
+          logs.push({
+            type: 'error',
+            category,
+            message: `XML file '${relativePath}' exists but is not declared in ${masterChangelog}`
+          });
+          errors++;
+        }
+      }
+    }
+
     // Check for SQL files without XML
     const sqlDir = join(workingDirectory, category, 'sql');
     if (await fs.access(sqlDir).then(() => true).catch(() => false)) {
@@ -213,46 +248,12 @@ app.post('/api/check-orphaned', async (req, res) => {
         if (sqlFile.endsWith('.sql')) {
           const baseName = sqlFile.replace('.sql', '');
           const xmlPath = join(workingDirectory, category, `${baseName}.xml`);
+          
           if (!await fs.access(xmlPath).then(() => true).catch(() => false)) {
             logs.push({
               type: 'error',
               category,
-              message: `SQL file '${category}/sql/${sqlFile}' has no corresponding XML file '${category}/${baseName}.xml'`
-            });
-            errors++;
-          }
-        }
-      }
-    }
-
-    // Check for XML files without SQL and not in changelog
-    const categoryDir = join(workingDirectory, category);
-    if (await fs.access(categoryDir).then(() => true).catch(() => false)) {
-      const xmlFiles = (await fs.readdir(categoryDir)).filter(f => f.endsWith('.xml') && !f.startsWith('changelog-'));
-      
-      for (const xmlFile of xmlFiles) {
-        const baseName = xmlFile.replace('.xml', '');
-        const sqlPath = join(workingDirectory, category, 'sql', `${baseName}.sql`);
-
-        // Check if XML has corresponding SQL
-        if (!await fs.access(sqlPath).then(() => true).catch(() => false)) {
-          logs.push({
-            type: 'error',
-            category,
-            message: `XML file '${category}/${xmlFile}' has no corresponding SQL file '${category}/sql/${baseName}.sql'`
-          });
-          errors++;
-        }
-
-        // Check if XML is declared in changelog
-        const masterPath = join(workingDirectory, masterChangelog);
-        if (await fs.access(masterPath).then(() => true).catch(() => false)) {
-          const content = await fs.readFile(masterPath, 'utf-8');
-          if (!content.includes(`file="${category}/${baseName}.xml"`)) {
-            logs.push({
-              type: 'error',
-              category,
-              message: `XML file '${category}/${xmlFile}' is not declared in ${masterChangelog}`
+              message: `SQL file '${category}/sql/${sqlFile}' has no corresponding XML file`
             });
             errors++;
           }
@@ -283,7 +284,11 @@ app.post('/api/check-references', async (req, res) => {
       for (const ref of references) {
         const file = ref.match(/file="([^"]+)"/)?.[1];
         if (file) {
-          const filePath = join(workingDirectory, file);
+          // Handle both relative and full paths
+          const filePath = file.includes('/') 
+            ? join(workingDirectory, file)
+            : join(workingDirectory, category, file);
+            
           if (!await fs.access(filePath).then(() => true).catch(() => false)) {
             logs.push({
               type: 'error',
@@ -303,13 +308,14 @@ app.post('/api/check-references', async (req, res) => {
         .filter(f => f.endsWith('.xml') && !f.startsWith('changelog-'));
 
       for (const xmlFile of xmlFiles) {
-        const content = await fs.readFile(join(categoryDir, xmlFile), 'utf-8');
+        const xmlPath = join(categoryDir, xmlFile);
+        const content = await fs.readFile(xmlPath, 'utf-8');
         const sqlRefs = content.match(/path="[^"]+"/g) || [];
 
         for (const ref of sqlRefs) {
           const sqlPath = ref.match(/path="([^"]+)"/)?.[1];
           if (sqlPath) {
-            const fullSqlPath = join(workingDirectory, category, sqlPath);
+            const fullSqlPath = join(categoryDir, sqlPath);
             if (!await fs.access(fullSqlPath).then(() => true).catch(() => false)) {
               logs.push({
                 type: 'error',
@@ -552,68 +558,122 @@ app.post('/api/apply-fix', async (req, res) => {
     console.log('Received action:', action, 'with details:', details);
 
     switch (action) {
-      case 'create-xml-and-reference': {
-        const { sqlFile, category } = details;
-        const workingDirectory = details.workingDirectory || process.cwd();
+      case 'create-referenced-file': {
+        const { xmlFile, category, workingDirectory } = details;
         
-        // Extract the base name (e.g., "PRC2" from "procedures/sql/PRC2.sql")
-        const baseName = sqlFile.split('/').pop().replace('.sql', '');
-        const xmlFileName = `${baseName}.xml`;
+        // Extract the base name without extension
+        const baseName = basename(xmlFile, '.xml');
         
-        console.log('Creating XML file:', xmlFileName, 'in category:', category); // Debug log
-
-        // Create XML content
-        const xmlContent = `<?xml version="1.0" encoding="UTF-8"?>
-<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
-                   http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
-    <changeSet id="${baseName}" author="liquibase">
-        <sqlFile path="sql/${baseName}.sql" relativeToChangelogFile="true"/>
-    </changeSet>
-</databaseChangeLog>`;
-
-        // Ensure category directory exists
-        const categoryPath = join(workingDirectory, category);
-        try {
-          await fs.access(categoryPath);
-        } catch {
-          await fs.mkdir(categoryPath, { recursive: true });
-        }
-
-        // Write the XML file
-        const xmlPath = join(categoryPath, xmlFileName);
-        console.log('Writing XML file to:', xmlPath); // Debug log
+        // Create paths
+        const xmlPath = join(workingDirectory, category, `${baseName}.xml`);
+        const sqlPath = join(workingDirectory, category, 'sql', `${baseName}.sql`);
+        
+        // Ensure directories exist
+        await fs.mkdir(join(workingDirectory, category), { recursive: true });
+        await fs.mkdir(join(workingDirectory, category, 'sql'), { recursive: true });
+        
+        // Create XML file
+        const xmlContent = await createChangelogXML('liquibase', baseName);
         await fs.writeFile(xmlPath, xmlContent);
-
-        console.log('XML file created successfully'); // Debug log
+        
+        // Create SQL file
+        const sqlContent = `-- Add your SQL here for ${baseName}`;
+        await fs.writeFile(sqlPath, sqlContent);
+        
+        console.log('Created files:', xmlPath, sqlPath);
         break;
       }
-
+      
       case 'add-to-changelog': {
-        const { xmlFile, changelogFile, workingDirectory } = details;
+        const { xmlFile, category, workingDirectory, version } = details;
+        const masterChangelog = `changelog-${version}-${category.toUpperCase()}.xml`;
+        const masterPath = join(workingDirectory, masterChangelog);
         
-        // Read the changelog file
-        const changelogPath = join(workingDirectory, changelogFile);
-        let content = await fs.readFile(changelogPath, 'utf8');
-        
-        // Find the closing tag
-        const closingTagIndex = content.lastIndexOf('</databaseChangeLog>');
-        
-        if (closingTagIndex === -1) {
-          throw new Error('Invalid changelog format');
+        // Read existing content
+        let content = '';
+        if (existsSync(masterPath)) {
+          content = await fs.readFile(masterPath, 'utf-8');
         }
         
-        // Add the include statement before the closing tag
-        const newContent = content.slice(0, closingTagIndex) +
-          `    <include file="${xmlFile.split('/').pop()}" relativeToChangelogFile="true"/>\n` +
-          content.slice(closingTagIndex);
+        // Find position to insert new include
+        const closingTagIndex = content.lastIndexOf('</databaseChangeLog>');
+        if (closingTagIndex === -1) {
+          // Create new changelog if it doesn't exist
+          content = `<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.3.xsd">
+`;
+        } else {
+          // Remove closing tag
+          content = content.substring(0, closingTagIndex);
+        }
         
-        // Write the updated content
-        await fs.writeFile(changelogPath, newContent);
-        console.log('Added XML file to changelog successfully');
+        // Add new include
+        content += `    <include file="${category}/${xmlFile}" relativeToChangelogFile="true"/>\n</databaseChangeLog>`;
+        
+        // Write updated content
+        await fs.writeFile(masterPath, content);
+        console.log('Updated changelog:', masterPath);
         break;
       }
+      
+      case 'create-sql-file': {
+        const { sqlFile, category, workingDirectory } = details;
+        const sqlPath = join(workingDirectory, category, 'sql', sqlFile);
+        
+        // Ensure sql directory exists
+        await fs.mkdir(join(workingDirectory, category, 'sql'), { recursive: true });
+        
+        // Create SQL file
+        const sqlContent = `-- Add your SQL here for ${basename(sqlFile, '.sql')}`;
+        await fs.writeFile(sqlPath, sqlContent);
+        
+        console.log('Created SQL file:', sqlPath);
+        break;
+      }
+      
+      case 'add-to-main-changelog': {
+        const { categoryChangelog, workingDirectory } = details;
+        const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
+        
+        let content = '';
+        if (existsSync(mainChangelogPath)) {
+          content = await fs.readFile(mainChangelogPath, 'utf-8');
+          
+          // Find position to insert new include
+          const closingTagIndex = content.lastIndexOf('</databaseChangeLog>');
+          if (closingTagIndex !== -1) {
+            content = content.substring(0, closingTagIndex);
+          }
+        } else {
+          // Create new main changelog if it doesn't exist
+          content = `<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.3.xsd">
+    
+    <!-- Definition de la version -->
+    <include file="tag-database.xml" relativeToChangelogFile="true"/>
+
+`;
+        }
+        
+        // Add new include
+        content += `    <include file="${categoryChangelog}" relativeToChangelogFile="true"/>\n</databaseChangeLog>`;
+        
+        // Write updated content
+        await fs.writeFile(mainChangelogPath, content);
+        console.log('Updated main changelog:', mainChangelogPath);
+        break;
+      }
+      
+      default:
+        throw new Error(`Unknown action: ${action}`);
     }
 
     res.json({ success: true });
@@ -665,6 +725,43 @@ app.post('/api/get-config', async (req, res) => {
   } catch (error) {
     console.error('Error getting config:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/liquibase', async (req, res) => {
+  const { command, workingDirectory, options } = req.body;
+  
+  try {
+    // First validate the Liquibase setup
+    const validation = await validateLiquibaseSetup(workingDirectory);
+    if (!validation.success) {
+      return res.status(400).json({
+        error: 'Invalid Liquibase setup',
+        details: validation.error
+      });
+    }
+
+    // Execute the command
+    const result = await executeLiquibaseCommand(workingDirectory, command, options);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        error: result.error,
+        logs: result.logs,
+        command: result.command
+      });
+    }
+
+    res.json({
+      success: true,
+      logs: result.logs,
+      command: result.command
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message,
+      logs: error.stderr?.split('\n').filter(Boolean)
+    });
   }
 });
 

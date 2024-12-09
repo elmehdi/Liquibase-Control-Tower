@@ -1,6 +1,23 @@
 import { mkdir, writeFile } from 'fs/promises';
 import { Action, Suggestion } from '../types';
 
+// Helper function to get basename (replaces path.basename)
+function getBasename(path: string, ext?: string): string {
+  // Remove trailing slashes
+  let base = path.replace(/[\/\\]$/, '');
+  
+  // Get the part after the last slash
+  base = base.slice(base.lastIndexOf('/') + 1);
+  base = base.slice(base.lastIndexOf('\\') + 1);
+  
+  // Remove extension if specified
+  if (ext && base.endsWith(ext)) {
+    base = base.slice(0, -ext.length);
+  }
+  
+  return base;
+}
+
 export function getSuggestion(errorMessage: string): Suggestion | null {
   console.log('Checking suggestion for:', errorMessage);
 
@@ -133,31 +150,133 @@ export function getSuggestion(errorMessage: string): Suggestion | null {
 
   // Referenced XML file doesn't exist
   if (errorMessage.includes('referenced in') && errorMessage.includes('does not exist')) {
-    const match = errorMessage.match(/File '(.+?)' referenced in (.+?) does not exist/);
-    if (match) {
-      const [_, xmlFile, changelogFile] = match;
+    console.log('Found referenced file error');
+    const fileMatch = errorMessage.match(/File '([^']+)'/);
+    // Fix the category extraction - look for it in the changelog filename
+    const categoryMatch = errorMessage.match(/changelog-\d+-([A-Z_]+)\.xml/);
+    const versionMatch = errorMessage.match(/changelog-(\d+)-/);
+    
+    console.log('Matches:', { fileMatch, categoryMatch, versionMatch });
+    
+    if (fileMatch && categoryMatch) {
+      const xmlFile = fileMatch[1];
+      const category = categoryMatch[1].toLowerCase();
+      const version = versionMatch ? versionMatch[1] : '49';
+      
+      console.log('Creating suggestion for:', { xmlFile, category, version });
+      
       return {
-        actions: [
-          {
-            label: 'Create Referenced File',
-            handler: async () => {
-              try {
-                const response = await fetch('http://localhost:3000/api/apply-fix', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ 
-                    action: 'create-referenced-file',
-                    details: { xmlFile, changelogFile }
-                  })
-                });
-                if (!response.ok) throw new Error('Failed to create referenced file');
-              } catch (error) {
-                console.error('Failed to create referenced file:', error);
-                throw error;
+        actions: [{
+          label: 'Create Referenced File',
+          handler: async () => {
+            try {
+              console.log('Creating referenced file:', { xmlFile, category, version });
+              const response = await fetch('http://localhost:3000/api/apply-fix', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'create-referenced-file',
+                  details: {
+                    xmlFile,
+                    category,
+                    version,
+                    workingDirectory: window.workingDirectory
+                  }
+                })
+              });
+              
+              if (!response.ok) {
+                throw new Error('Failed to create referenced file');
               }
+            } catch (error) {
+              console.error('Failed to create referenced file:', error);
+              throw error;
             }
           }
-        ]
+        }]
+      };
+    }
+  }
+
+  // XML file not declared in changelog suggestion
+  if (errorMessage.includes('exists but is not declared in')) {
+    const fileMatch = errorMessage.match(/XML file '([^']+)'/);
+    const categoryMatch = errorMessage.match(/\[([^\]]+)\]/);
+    const versionMatch = errorMessage.match(/changelog-(\d+)-/);
+    
+    if (fileMatch && categoryMatch && versionMatch) {
+      const xmlFile = getBasename(fileMatch[1]);
+      const category = categoryMatch[1].toLowerCase();
+      const version = versionMatch[1];
+      
+      return {
+        actions: [{
+          label: 'Add to Changelog',
+          handler: async () => {
+            try {
+              const response = await fetch('http://localhost:3000/api/apply-fix', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'add-to-changelog',
+                  details: {
+                    xmlFile,
+                    category,
+                    version,
+                    workingDirectory: window.workingDirectory
+                  }
+                })
+              });
+              
+              if (!response.ok) {
+                throw new Error('Failed to add to changelog');
+              }
+            } catch (error) {
+              console.error('Failed to add to changelog:', error);
+              throw error;
+            }
+          }
+        }]
+      };
+    }
+  }
+
+  // SQL file missing suggestion
+  if (errorMessage.includes('has no corresponding SQL file')) {
+    const fileMatch = errorMessage.match(/SQL file '([^']+)'/);
+    const categoryMatch = errorMessage.match(/\[([^\]]+)\]/);
+    
+    if (fileMatch && categoryMatch) {
+      const sqlFile = getBasename(fileMatch[1]);
+      const category = categoryMatch[1].toLowerCase();
+      
+      return {
+        actions: [{
+          label: 'Create SQL File',
+          handler: async () => {
+            try {
+              const response = await fetch('http://localhost:3000/api/apply-fix', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'create-sql-file',
+                  details: {
+                    sqlFile,
+                    category,
+                    workingDirectory: window.workingDirectory
+                  }
+                })
+              });
+              
+              if (!response.ok) {
+                throw new Error('Failed to create SQL file');
+              }
+            } catch (error) {
+              console.error('Failed to create SQL file:', error);
+              throw error;
+            }
+          }
+        }]
       };
     }
   }

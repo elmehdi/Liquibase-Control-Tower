@@ -34,7 +34,10 @@ export const Checker: React.FC<CheckerProps> = ({ workingDirectory }) => {
                     
       const logMessage = `${prefix} [${result.type.toUpperCase()}] [${result.category}]: ${result.message}`;
       
-      const suggestion = result.type === 'error' ? getSuggestion(result.message) : null;
+      const suggestion = result.type === 'error' ? (
+        console.log('Error message:', result.message),
+        getSuggestion(result.message)
+      ) : null;
       if (suggestion) {
         setHasActions(true);
       }
