@@ -558,290 +558,74 @@ app.post('/api/check-sql-exists', async (req, res) => {
 app.post('/api/apply-fix', async (req, res) => {
   const { action, details } = req.body;
   
+  console.log('Received fix request:', { action, details });
+  
   try {
     switch (action) {
-      case 'create-referenced-file': {
-        const { xmlFile, category, workingDirectory } = details;
+      case 'create-xml-and-reference': {
+        const { sqlFile, xmlFile, category, workingDirectory } = details;
         
+        if (!sqlFile || !category || !workingDirectory) {
+          console.error('Missing required fields:', { sqlFile, category, workingDirectory });
+          return res.status(400).json({ error: 'Missing required fields' });
+        }
+
+        console.log('Creating XML file with details:', { sqlFile, xmlFile, category });
+
         // Extract the base name without extension
-        const baseName = basename(xmlFile, '.xml');
+        const baseName = basename(sqlFile, '.sql');
         
         // Create paths
         const xmlPath = join(workingDirectory, category, `${baseName}.xml`);
         const sqlPath = join(workingDirectory, category, 'sql', `${baseName}.sql`);
         
-        // Ensure directories exist
-        await fs.mkdir(join(workingDirectory, category), { recursive: true });
-        await fs.mkdir(join(workingDirectory, category, 'sql'), { recursive: true });
-        
-        // Create XML file
-        const xmlContent = await createChangelogXML('liquibase', baseName);
-        await fs.writeFile(xmlPath, xmlContent);
-        
-        // Create SQL file
-        const sqlContent = `-- Add your SQL here for ${baseName}`;
-        await fs.writeFile(sqlPath, sqlContent);
-        
-        console.log('Created files:', xmlPath, sqlPath);
-        break;
-      }
-      
-      case 'add-to-changelog': {
-        const { xmlFile, changelogFile, workingDirectory } = details;
-        const changelogPath = join(workingDirectory, changelogFile);
-        
-        // Read existing content
-        let content = await fs.readFile(changelogPath, 'utf8');
-        
-        // Find the closing tag position
-        const closingTagIndex = content.lastIndexOf('</databaseChangeLog>');
-        
-        if (closingTagIndex === -1) {
-          throw new Error('Invalid changelog format');
+        console.log('Creating files at:', { xmlPath, sqlPath });
+
+        try {
+          // Create XML file with proper content
+          const xmlContent = `<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+    http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.3.xsd">
+    
+    <changeSet id="${baseName}" author="system">
+        <sqlFile path="sql/${baseName}.sql" relativeToChangelogFile="true"/>
+    </changeSet>
+</databaseChangeLog>`;
+
+          await fs.writeFile(xmlPath, xmlContent);
+          
+          // Add to changelog if it exists
+          const changelogPath = join(workingDirectory, `changelog-49-${category.toUpperCase()}.xml`);
+          if (await fs.access(changelogPath).then(() => true).catch(() => false)) {
+            let changelogContent = await fs.readFile(changelogPath, 'utf8');
+            const insertPoint = changelogContent.lastIndexOf('</databaseChangeLog>');
+            const newEntry = `    <include file="${category}/${baseName}.xml" relativeToChangelogFile="true"/>\n`;
+            changelogContent = changelogContent.slice(0, insertPoint) + newEntry + changelogContent.slice(insertPoint);
+            await fs.writeFile(changelogPath, changelogContent);
+          }
+
+          console.log('Successfully created XML file and updated changelog');
+          res.json({ success: true });
+        } catch (fileError) {
+          console.error('File operation error:', fileError);
+          throw fileError;
         }
-        
-        // Insert new include before closing tag
-        const newContent = content.slice(0, closingTagIndex) +
-          `    <include file="${xmlFile}" relativeToChangelogFile="true"/>\n` +
-          content.slice(closingTagIndex);
-        
-        // Write updated content
-        await fs.writeFile(changelogPath, newContent);
-        
-        res.json({ success: true });
         break;
       }
       
-      case 'create-sql-file': {
-        const { sqlFile, category, workingDirectory } = details;
-        const sqlPath = join(workingDirectory, category, 'sql', sqlFile);
-        
-        // Ensure sql directory exists
-        await fs.mkdir(join(workingDirectory, category, 'sql'), { recursive: true });
-        
-        // Create SQL file
-        const sqlContent = `-- Add your SQL here for ${basename(sqlFile, '.sql')}`;
-        await fs.writeFile(sqlPath, sqlContent);
-        
-        console.log('Created SQL file:', sqlPath);
-        break;
-      }
-      
-      case 'add-to-main-changelog': {
-        const { changelogFile, workingDirectory } = details;
-        const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
-        
-        // Read existing content
-        const content = await fs.readFile(mainChangelogPath, 'utf8');
-        
-        // Find the closing tag position
-        const closingTagIndex = content.lastIndexOf('</databaseChangeLog>');
-        
-        if (closingTagIndex === -1) {
-          throw new Error('Invalid main changelog format');
-        }
-        
-        // Insert new include before closing tag
-        const newContent = content.slice(0, closingTagIndex) +
-          `    <include file="${changelogFile}" relativeToChangelogFile="true"/>\n` +
-          content.slice(closingTagIndex);
-        
-        // Write updated content
-        await fs.writeFile(mainChangelogPath, newContent);
-        
-        res.json({ success: true });
-        break;
-      }
-      
-      case 'fix-xml-format': {
-        const { xmlFile, workingDirectory } = details;
-        const xmlPath = join(workingDirectory, xmlFile);
-        
-        // Read the XML file
-        const content = await fs.readFile(xmlPath, 'utf8');
-        
-        // Use prettier to format XML
-        const formatted = prettier.format(content, {
-          parser: 'xml',
-          xmlWhitespaceSensitivity: 'ignore',
-          printWidth: 100
-        });
-        
-        // Write back formatted content
-        await fs.writeFile(xmlPath, formatted);
-        res.json({ success: true });
-        break;
-      }
-
-      case 'fix-sql-format': {
-        const { sqlFile, workingDirectory } = details;
-        const sqlPath = join(workingDirectory, sqlFile);
-        
-        // Read the SQL file
-        const content = await fs.readFile(sqlPath, 'utf8');
-        
-        // Use sql-formatter to format SQL
-        const formatted = sqlFormatter.format(content, {
-          language: 'postgresql',
-          uppercase: true
-        });
-        
-        // Write back formatted content
-        await fs.writeFile(sqlPath, formatted);
-        res.json({ success: true });
-        break;
-      }
-
-      case 'remove-duplicate-entry': {
-        const { entry, changelogFile, workingDirectory } = details;
-        const changelogPath = join(workingDirectory, changelogFile);
-        
-        // Read changelog content
-        const content = await fs.readFile(changelogPath, 'utf8');
-        
-        // Parse XML
-        const parser = new xml2js.Parser();
-        const result = await parser.parseStringPromise(content);
-        
-        // Remove duplicate entries
-        const seen = new Set();
-        result.databaseChangeLog.changeSet = result.databaseChangeLog.changeSet.filter(changeSet => {
-          const key = JSON.stringify(changeSet);
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-        
-        // Build XML
-        const builder = new xml2js.Builder();
-        const xml = builder.buildObject(result);
-        
-        // Write back to file
-        await fs.writeFile(changelogPath, xml);
-        res.json({ success: true });
-        break;
-      }
-
-      case 'fix-version-number': {
-        const { changelogFile, workingDirectory } = details;
-        const oldPath = join(workingDirectory, changelogFile);
-        
-        // Extract current version from tag-database.xml
-        const tagPath = join(workingDirectory, 'tag-database.xml');
-        const tagContent = await fs.readFile(tagPath, 'utf8');
-        const versionMatch = tagContent.match(/tag="(\d+)/);
-        const correctVersion = versionMatch ? versionMatch[1] : '49';
-        
-        // Create new filename with correct version
-        const newFile = changelogFile.replace(/changelog-\d+/, `changelog-${correctVersion}`);
-        const newPath = join(workingDirectory, newFile);
-        
-        // Rename file
-        await fs.rename(oldPath, newPath);
-        
-        // Update references in main changelog
-        const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
-        let mainContent = await fs.readFile(mainChangelogPath, 'utf8');
-        mainContent = mainContent.replace(changelogFile, newFile);
-        await fs.writeFile(mainChangelogPath, mainContent);
-        
-        res.json({ success: true });
-        break;
-      }
-
-      case 'fix-category-name': {
-        const { changelogFile, workingDirectory } = details;
-        const oldPath = join(workingDirectory, changelogFile);
-        
-        // Extract version and fix category name
-        const match = changelogFile.match(/changelog-(\d+)-([^.]+)/);
-        if (!match) throw new Error('Invalid changelog filename format');
-        
-        const [, version, category] = match;
-        const correctCategory = category.toUpperCase();
-        
-        // Create new filename
-        const newFile = `changelog-${version}-${correctCategory}.xml`;
-        const newPath = join(workingDirectory, newFile);
-        
-        // Rename file
-        await fs.rename(oldPath, newPath);
-        
-        // Update references in main changelog
-        const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
-        let mainContent = await fs.readFile(mainChangelogPath, 'utf8');
-        mainContent = mainContent.replace(changelogFile, newFile);
-        await fs.writeFile(mainChangelogPath, mainContent);
-        
-        res.json({ success: true });
-        break;
-      }
-
-      case 'add-orphaned-xml': {
-        const { xmlFile, workingDirectory } = details;
-        const category = xmlFile.split('/')[0];
-        const version = '49'; // Default version
-        
-        // Add to appropriate changelog
-        const changelogPath = join(workingDirectory, `changelog-${version}-${category.toUpperCase()}.xml`);
-        let changelogContent = await fs.readFile(changelogPath, 'utf8');
-        
-        // Add include before closing tag
-        const closingIndex = changelogContent.lastIndexOf('</databaseChangeLog>');
-        const newContent = changelogContent.slice(0, closingIndex) +
-          `    <include file="${xmlFile}" relativeToChangelogFile="true"/>\n` +
-          changelogContent.slice(closingIndex);
-        
-        await fs.writeFile(changelogPath, newContent);
-        res.json({ success: true });
-        break;
-      }
-
-      case 'remove-orphaned-xml': {
-        const { xmlFile, workingDirectory } = details;
-        const xmlPath = join(workingDirectory, xmlFile);
-        
-        // Remove the file
-        await fs.unlink(xmlPath);
-        res.json({ success: true });
-        break;
-      }
-
-      case 'add-required-attributes': {
-        const { xmlFile, workingDirectory } = details;
-        const xmlPath = join(workingDirectory, xmlFile);
-        
-        // Read XML content
-        const content = await fs.readFile(xmlPath, 'utf8');
-        
-        // Parse XML
-        const parser = new xml2js.Parser();
-        const result = await parser.parseStringPromise(content);
-        
-        // Add required attributes if missing
-        if (result.databaseChangeLog.changeSet) {
-          result.databaseChangeLog.changeSet.forEach(changeSet => {
-            if (!changeSet.$.id) changeSet.$.id = uuidv4();
-            if (!changeSet.$.author) changeSet.$.author = 'system';
-          });
-        }
-        
-        // Build XML
-        const builder = new xml2js.Builder();
-        const xml = builder.buildObject(result);
-        
-        // Write back to file
-        await fs.writeFile(xmlPath, xml);
-        res.json({ success: true });
-        break;
-      }
-
       default:
+        console.error('Unknown action type:', action);
         res.status(400).json({ error: 'Unknown action type' });
     }
   } catch (error) {
-    console.error('Failed to apply fix:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Server error while applying fix:', error);
+    res.status(500).json({ 
+      error: error.message,
+      details: error.stack
+    });
   }
 });
 

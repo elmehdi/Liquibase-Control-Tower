@@ -1,5 +1,7 @@
 import { mkdir, writeFile } from 'fs/promises';
 import { Action, Suggestion } from '../types';
+import { promises as fs } from 'fs';
+import path from 'path';
 
 // Helper function to get basename (replaces path.basename)
 function getBasename(path: string, ext?: string): string {
@@ -171,7 +173,7 @@ export function getSuggestion(errorMessage: string): Suggestion | null {
           label: 'Create Referenced File',
           handler: async () => {
             try {
-              console.log('Creating referenced file:', { xmlFile, category, version });
+              console.log('Sending request to create file:', { xmlFile, category, version });
               const response = await fetch('http://localhost:3000/api/apply-fix', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -187,7 +189,9 @@ export function getSuggestion(errorMessage: string): Suggestion | null {
               });
               
               if (!response.ok) {
-                throw new Error('Failed to create referenced file');
+                const errorData = await response.json();
+                console.error('Server returned error:', errorData);
+                throw new Error(errorData.error || 'Failed to create XML file');
               }
             } catch (error) {
               console.error('Failed to create referenced file:', error);
