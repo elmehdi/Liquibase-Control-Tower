@@ -5,9 +5,12 @@ import { Header } from './components/Header';
 import { Checker } from './components/Checker';
 import { Generator } from './components/Generator';
 import { ProjectSetup } from './components/ProjectSetup';
+import { Installer } from './components/Installer';
+
+type Step = 'directory' | 'mode' | 'check' | 'build' | 'install';
 
 function App() {
-  const [step, setStep] = React.useState<'directory' | 'mode' | 'check' | 'build'>('directory');
+  const [step, setStep] = React.useState<Step>('directory');
   const [workingDirectory, setWorkingDirectory] = React.useState('');
 
   const handleDirectorySelect = (directory: string) => {
@@ -16,10 +19,18 @@ function App() {
   };
 
   const handleModeSelect = (mode: string) => {
-    if (mode === 'check') {
-      setStep('check');
-    } else if (mode === 'build') {
-      setStep('build');
+    switch (mode) {
+      case 'check':
+        setStep('check');
+        break;
+      case 'build':
+        setStep('build');
+        break;
+      case 'install':
+        setStep('install');
+        break;
+      default:
+        console.warn('Unknown mode:', mode);
     }
   };
 
@@ -37,6 +48,8 @@ function App() {
         return <Checker workingDirectory={workingDirectory} />;
       case 'build':
         return <Generator workingDirectory={workingDirectory} />;
+      case 'install':
+        return <Installer workingDirectory={workingDirectory} />;
       default:
         return null;
     }

@@ -32,9 +32,9 @@ export const ModeSelector: React.FC<ModeSelectionProps> = ({ onSelect }) => {
     {
       mode: 'install',
       title: 'Install DEV2',
-      description: 'Coming soon...',
+      description: 'Execute Liquibase commands to manage database changes',
       icon: <Download size={24} />,
-      available: false,
+      available: true,
     },
   ];
 
