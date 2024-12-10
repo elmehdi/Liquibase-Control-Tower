@@ -1,7 +1,47 @@
-node_modules
+# Node.js
+node_modules/
 npm-debug.log
-Dockerfile
-.dockerignore
-.git
+yarn-debug.log
+yarn-error.log
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Development
+.git/
 .gitignore
-README.md 
+.env
+.env.local
+.env.*.local
+*.log
+
+# IDE and Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Test files
+__tests__/
+*.test.js
+*.spec.js
+coverage/
+
+# Docker
+docker/
+Dockerfile*
+.dockerignore
+
+# Documentation
+README.md
+CHANGELOG.md
+docs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/ 

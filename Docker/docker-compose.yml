@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile.frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../src:/app/src
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile.backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../server:/app/server
+    depends_on:
+      - liquibase
+
+  liquibase:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile.liquibase
+    volumes:
+      - ../liquibase:/liquibase/workspace

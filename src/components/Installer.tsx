@@ -11,6 +11,7 @@ import {
   RefreshCw,
   FileText
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface InstallerProps {
   workingDirectory: string;
@@ -205,98 +206,147 @@ export const Installer: React.FC<InstallerProps> = ({ workingDirectory }) => {
 
   return (
     <div className="w-full px-6">
-      <div className="space-y-6">
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-semibold text-gray-800">
-              Liquibase Command Execution
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="space-y-6"
+      >
+        <div className="bg-white rounded-lg shadow-sm p-6 backdrop-blur-sm bg-white/80">
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex items-center justify-between mb-6"
+          >
+            <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+              <Database size={24} className="text-blue-500" />
+              Liquibase Command Panel
             </h2>
-            <div className="text-sm text-gray-500">
-              <RefreshCw size={16} className="inline mr-2" />
+            <div className="text-sm text-gray-500 flex items-center gap-2">
+              <RefreshCw size={16} className="inline" />
               Working Directory: {workingDirectory}
             </div>
-          </div>
+          </motion.div>
 
           {/* Category Tabs */}
-          <div className="flex space-x-4 mb-6 border-b">
+          <div className="flex space-x-4 mb-6 border-b relative">
             {Object.entries(categoryLabels).map(([key, value]) => (
-              <button
+              <motion.button
                 key={key}
                 onClick={() => setActiveCategory(key as CommandCategory)}
                 className={`flex items-center gap-2 px-4 py-2 -mb-px
-                           transition-colors duration-200
+                           transition-all duration-300 ease-in-out
                            ${activeCategory === key 
                              ? `border-b-2 ${value.color} font-medium` 
                              : 'text-gray-500 border-b-2 border-transparent'}`}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
               >
                 {value.icon}
                 {value.label}
-              </button>
+              </motion.button>
             ))}
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-6">
-            {filteredCommands.map((option) => (
-              <div key={option.command} className="flex flex-col">
-                <button
-                  onClick={() => handleCommandClick(option)}
-                  disabled={isExecuting}
-                  className={`p-4 border rounded-lg
-                           text-left transition-all duration-200
-                           disabled:opacity-50 disabled:cursor-not-allowed
-                           hover:shadow-md h-full
-                           ${(selectedCommand === option.command) 
-                             ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200' 
-                             : 'border-gray-200 hover:border-gray-300'}`}
+          <motion.div 
+            layout
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-6"
+          >
+            <AnimatePresence mode="wait">
+              {filteredCommands.map((option) => (
+                <motion.div
+                  key={option.command}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  transition={{ duration: 0.2 }}
+                  className="flex flex-col"
                 >
-                  <div className="flex items-center gap-2">
-                    {option.icon}
-                    <h3 className="font-medium text-gray-800">{option.label}</h3>
-                  </div>
-                  <p className="text-sm text-gray-500 mt-1">{option.description}</p>
-                  {isExecuting && option.command === selectedCommand && (
-                    <div className="mt-2 text-sm text-blue-600">
-                      Executing...
-                    </div>
-                  )}
-                </button>
-                
-                {selectedCommand === option.command && option.requiresInput && (
-                  <div className="mt-2 p-4 border border-gray-200 rounded-lg bg-gray-50">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      {option.inputLabel}
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type={option.inputType}
-                        value={commandInput}
-                        onChange={(e) => setCommandInput(e.target.value)}
-                        placeholder={option.inputPlaceholder}
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-md 
-                                 focus:outline-none focus:ring-2 focus:ring-blue-500
-                                 bg-white"
-                        min={option.inputType === 'number' ? "1" : undefined}
-                      />
-                      <button
-                        onClick={() => executeCommand(option.command)}
-                        disabled={!commandInput || isExecuting}
-                        className={`px-4 py-2 text-white rounded-md
-                                 transition-colors duration-200
-                                 disabled:opacity-50 disabled:cursor-not-allowed
-                                 ${option.buttonColor || 'bg-blue-600 hover:bg-blue-700'}`}
+                  <motion.button
+                    onClick={() => handleCommandClick(option)}
+                    disabled={isExecuting}
+                    className={`p-4 border rounded-lg
+                             text-left transition-all duration-300
+                             disabled:opacity-50 disabled:cursor-not-allowed
+                             hover:shadow-lg hover:scale-[1.02] active:scale-[0.98]
+                             h-full backdrop-blur-sm
+                             ${(selectedCommand === option.command) 
+                               ? 'border-blue-500 bg-blue-50/80 ring-2 ring-blue-200' 
+                               : 'border-gray-200 hover:border-gray-300 bg-white/80'}`}
+                    whileHover={{ y: -2 }}
+                    whileTap={{ y: 0 }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <motion.div
+                        animate={isExecuting && selectedCommand === option.command ? 
+                          { rotate: [0, 360] } : {}}
+                        transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
                       >
-                        {isExecuting ? 'Executing...' : 'Execute'}
-                      </button>
+                        {option.icon}
+                      </motion.div>
+                      <h3 className="font-medium text-gray-800">{option.label}</h3>
                     </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+                    <p className="text-sm text-gray-500 mt-1">{option.description}</p>
+                    {isExecuting && option.command === selectedCommand && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="mt-2 text-sm text-blue-600 flex items-center gap-2"
+                      >
+                        <motion.div
+                          animate={{ scale: [1, 1.2, 1] }}
+                          transition={{ duration: 1, repeat: Infinity }}
+                          className="w-2 h-2 bg-blue-600 rounded-full"
+                        />
+                        Executing...
+                      </motion.div>
+                    )}
+                  </motion.button>
+                  
+                  <AnimatePresence>
+                    {selectedCommand === option.command && option.requiresInput && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="mt-2 p-4 border border-gray-200 rounded-lg bg-gray-50/80 backdrop-blur-sm"
+                      >
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          {option.inputLabel}
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type={option.inputType}
+                            value={commandInput}
+                            onChange={(e) => setCommandInput(e.target.value)}
+                            placeholder={option.inputPlaceholder}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-md 
+                                     focus:outline-none focus:ring-2 focus:ring-blue-500
+                                     bg-white/80 backdrop-blur-sm transition-all duration-300"
+                          />
+                          <motion.button
+                            onClick={() => executeCommand(option.command)}
+                            disabled={!commandInput || isExecuting}
+                            className={`px-4 py-2 text-white rounded-md
+                                     transition-all duration-300
+                                     disabled:opacity-50 disabled:cursor-not-allowed
+                                     ${option.buttonColor || 'bg-blue-600 hover:bg-blue-700'}`}
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                          >
+                            {isExecuting ? 'Executing...' : 'Execute'}
+                          </motion.button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </motion.div>
         </div>
 
         <LogBox logs={logs} />
-      </div>
+      </motion.div>
     </div>
   );
 }; 

@@ -1,0 +1,38 @@
+# Use OpenJDK as base image (includes Java)
+FROM openjdk:17-slim
+
+# Install Node.js and npm
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Liquibase
+RUN curl -L https://github.com/liquibase/liquibase/releases/download/v4.25.0/liquibase-4.25.0.tar.gz | tar xz -C /opt/ \
+    && ln -s /opt/liquibase/liquibase /usr/local/bin/
+
+# Set environment variables
+ENV LIQUIBASE_HOME=/opt/liquibase
+ENV LIQUIBASE_DEFAULTS_FILE=/liquibase/workspace/liquibase.properties
+
+# Set up workspace
+WORKDIR /liquibase/workspace
+
+# Copy service files
+COPY liquibase-service/package*.json ./service/
+RUN cd service && npm install
+
+# Copy service contents
+COPY liquibase-service/ ./service/
+
+# Add healthcheck
+HEALTHCHECK --interval=30s --timeout=3s \
+  CMD curl -f http://localhost:8080/health || exit 1
+
+# Expose service port
+EXPOSE 8080
+
+# Start the service
+CMD ["sh", "-c", "cd service && node index.js"] 
