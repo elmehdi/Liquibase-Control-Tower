@@ -8,7 +8,15 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      - ../src:/app/src
+      - ../src:/app/src:ro
+      - ../index.html:/app/index.html:ro
+      - ../tsconfig.json:/app/tsconfig.json:ro
+      - ../tsconfig.app.json:/app/tsconfig.app.json:ro
+      - ../tsconfig.node.json:/app/tsconfig.node.json:ro
+      - ../vite.config.ts:/app/vite.config.ts:ro
+      - ../tailwind.config.js:/app/tailwind.config.js:ro
+      - ../postcss.config.js:/app/postcss.config.js:ro
+      - ../src/index.css:/app/src/index.css:ro
     depends_on:
       - backend
 

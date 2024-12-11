@@ -4,9 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "dev:client": "vite --port 5173",
-    "dev:server": "node server/index.js",
+    "dev": "vite",
+    "dev:client": "vite --host",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -14,6 +13,7 @@
   "dependencies": {
     "@heroicons/react": "^2.2.0",
     "express": "^4.18.3",
+    "framer-motion": "^11.0.8",
     "lucide-react": "^0.344.0",
     "node-file-dialog": "^1.0.3",
     "prettier": "^3.4.2",

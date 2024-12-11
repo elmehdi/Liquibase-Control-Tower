@@ -1,12 +1,12 @@
-# Use OpenJDK as base image (includes Java)
+# Use OpenJDK as base image
 FROM openjdk:17-slim
 
-# Install Node.js and npm
+# Install required packages
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y nodejs \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Liquibase
@@ -19,6 +19,9 @@ ENV LIQUIBASE_DEFAULTS_FILE=/liquibase/workspace/liquibase.properties
 
 # Set up workspace
 WORKDIR /liquibase/workspace
+
+# Create service directory
+RUN mkdir -p service
 
 # Copy service files
 COPY liquibase-service/package*.json ./service/
@@ -35,4 +38,4 @@ HEALTHCHECK --interval=30s --timeout=3s \
 EXPOSE 8080
 
 # Start the service
-CMD ["sh", "-c", "cd service && node index.js"] 
+CMD ["node", "./service/index.js"] 

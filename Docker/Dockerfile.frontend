@@ -8,21 +8,17 @@ ENV VITE_PORT=5173
 # Create and set working directory
 WORKDIR /app
 
-# Copy package files for better caching
+# Copy package files and install dependencies
 COPY package*.json ./
-
-# Copy frontend package files
-COPY src/package*.json ./src/
-
-# Install dependencies
+COPY tsconfig*.json ./
+COPY tailwind.config.js ./
+COPY postcss.config.js ./
 RUN npm install
-RUN cd src && npm install
 
-# Copy frontend files
+# Copy source files
 COPY src/ ./src/
 COPY index.html ./
 COPY vite.config.ts ./
-COPY tsconfig.json ./
 
 # Add healthcheck for Vite dev server
 HEALTHCHECK --interval=30s --timeout=3s \
@@ -32,4 +28,4 @@ HEALTHCHECK --interval=30s --timeout=3s \
 EXPOSE 5173
 
 # Start Vite dev server with host flag for Docker
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"] 
+CMD ["npm", "run", "dev:client", "--", "--host"]
