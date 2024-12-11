@@ -2,6 +2,8 @@ import express from 'express';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { join } from 'path';
+import { existsSync } from 'fs';
+import * as fs from 'fs';
 
 const execAsync = promisify(exec);
 const app = express();
@@ -113,7 +115,7 @@ app.post('/execute', async (req, res) => {
     res.status(error.code === 'INVALID_COMMAND' ? 400 : 500).json({
       success: false,
       error: error.message,
-      stderr: error.stderr?.split('\n').filter(Boolean) || [],
+      stderr: error.stderr ? error.stderr.split('\n').filter(Boolean) : [],
       command: error.cmd
     });
   }
@@ -131,6 +133,38 @@ app.get('/health', async (req, res) => {
     res.status(500).json({ 
       status: 'unhealthy',
       error: error.message
+    });
+  }
+});
+
+// Add this endpoint
+app.post('/validate', async (req, res) => {
+  const { workingDirectory } = req.body;
+  
+  try {
+    const propertiesPath = join(workingDirectory, 'liquibase.properties');
+    
+    // Check if liquibase.properties exists
+    if (!existsSync(propertiesPath)) {
+      return res.status(400).json({
+        success: false,
+        error: 'liquibase.properties not found',
+        details: ['Missing liquibase.properties file in the specified directory']
+      });
+    }
+
+    // Try to read the properties file to ensure it's accessible
+    await fs.promises.access(propertiesPath, fs.constants.R_OK);
+
+    res.json({
+      success: true,
+      details: ['Setup validated successfully']
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message,
+      details: ['Failed to validate Liquibase setup']
     });
   }
 });

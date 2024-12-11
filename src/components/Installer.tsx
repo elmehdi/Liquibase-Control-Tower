@@ -144,6 +144,7 @@ export const Installer: React.FC<InstallerProps> = ({ workingDirectory }) => {
   const executeCommand = async (command: LiquibaseCommand) => {
     setIsExecuting(true);
     setLogs(prev => [...prev, `Executing liquibase ${command}...`]);
+    console.log('Working directory:', workingDirectory);
 
     try {
       const options: any = {};

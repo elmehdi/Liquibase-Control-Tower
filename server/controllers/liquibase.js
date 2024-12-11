@@ -1,15 +1,53 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { join } from 'path';
+import { existsSync } from 'fs';
+import fetch from 'node-fetch';
 
 const execAsync = promisify(exec);
 
 export const executeLiquibaseCommand = async (workingDirectory, command, options = {}) => {
   try {
-    // Build the command with options
-    let fullCommand = `liquibase --defaultsFile=${join(workingDirectory, 'liquibase.properties')}`;
+    // First try to execute via Liquibase service
+    try {
+      // Convert the working directory path to the correct path in the Liquibase container
+      const liquibaseWorkingDir = workingDirectory.replace('/app', '/liquibase/workspace');
+      console.log('Converting path:', workingDirectory, 'to:', liquibaseWorkingDir);
+
+      const response = await fetch('http://liquibase:8080/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          command,
+          options: {
+            ...options,
+            defaultsFile: `${liquibaseWorkingDir}/liquibase.properties`
+          }
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        return {
+          success: true,
+          logs: data.output.split('\n').filter(Boolean),
+          command: data.command
+        };
+      }
+    } catch (serviceError) {
+      console.error('Failed to execute via Liquibase service:', serviceError);
+    }
+
+    // Fallback to direct execution if service fails
+    const propertiesPath = join(workingDirectory, 'liquibase.properties');
+    if (!existsSync(propertiesPath)) {
+      throw new Error('liquibase.properties not found');
+    }
+
+    let fullCommand = `liquibase --defaultsFile="${propertiesPath}"`;
     
-    // Add any additional options
     if (options.tag) {
       fullCommand += ` --tag="${options.tag}"`;
     }
@@ -17,10 +55,13 @@ export const executeLiquibaseCommand = async (workingDirectory, command, options
       fullCommand += ` --count=${options.count}`;
     }
     
-    // Add the main command
     fullCommand += ` ${command}`;
 
-    const { stdout, stderr } = await execAsync(fullCommand, { cwd: workingDirectory });
+    console.log('Executing Liquibase command:', fullCommand);
+    const { stdout, stderr } = await execAsync(fullCommand, { 
+      cwd: workingDirectory,
+      env: { ...process.env, PATH: process.env.PATH }
+    });
 
     return {
       success: true,
@@ -28,34 +69,56 @@ export const executeLiquibaseCommand = async (workingDirectory, command, options
       command: fullCommand
     };
   } catch (error) {
+    console.error('Liquibase execution error:', error);
     return {
       success: false,
       error: error.message,
-      logs: error.stderr?.split('\n').filter(Boolean),
+      logs: error.stderr ? error.stderr.split('\n').filter(Boolean) : [],
       command: error.cmd
     };
   }
 };
 
 export const validateLiquibaseSetup = async (workingDirectory) => {
+  console.log('Original working directory:', workingDirectory);
+  
+  // Convert the working directory path to the correct path in the Liquibase container
+  const liquibaseWorkingDir = workingDirectory.replace('/app', '/liquibase/workspace');
+  console.log('Converted working directory:', liquibaseWorkingDir);
+  
   try {
-    // Check if liquibase.properties exists
-    const { stdout: version } = await execAsync('liquibase --version');
-    const { stdout: status } = await execAsync(
-      `liquibase --defaultsFile=${join(workingDirectory, 'liquibase.properties')} status`,
-      { cwd: workingDirectory }
-    );
+    console.log('Checking Liquibase service setup...');
+    const response = await fetch('http://liquibase:8080/validate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        workingDirectory: liquibaseWorkingDir
+      }),
+    });
+
+    const data = await response.json();
+    console.log('Liquibase service validation:', data);
+
+    if (!data.success) {
+      return {
+        success: false,
+        error: data.error,
+        details: data.details || ['Setup validation failed']
+      };
+    }
 
     return {
       success: true,
-      version: version.trim(),
-      status: status.split('\n').filter(Boolean)
+      details: ['Liquibase setup validated successfully']
     };
   } catch (error) {
+    console.error('Failed to validate via Liquibase service:', error);
     return {
       success: false,
-      error: error.message,
-      details: error.stderr?.split('\n').filter(Boolean)
+      error: 'Cannot connect to Liquibase service',
+      details: [error.message]
     };
   }
-}; 
+};

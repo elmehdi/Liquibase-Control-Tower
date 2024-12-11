@@ -17,18 +17,16 @@ RUN curl -L https://github.com/liquibase/liquibase/releases/download/v4.25.0/liq
 ENV LIQUIBASE_HOME=/opt/liquibase
 ENV LIQUIBASE_DEFAULTS_FILE=/liquibase/workspace/liquibase.properties
 
-# Set up workspace
-WORKDIR /liquibase/workspace
-
-# Create service directory
-RUN mkdir -p service
+# Set up workspace and service directories
+WORKDIR /liquibase
+RUN mkdir -p workspace service
 
 # Copy service files
 COPY liquibase-service/package*.json ./service/
 RUN cd service && npm install
 
 # Copy service contents
-COPY liquibase-service/ ./service/
+COPY liquibase-service/index.js ./service/
 
 # Add healthcheck
 HEALTHCHECK --interval=30s --timeout=3s \
@@ -38,4 +36,4 @@ HEALTHCHECK --interval=30s --timeout=3s \
 EXPOSE 8080
 
 # Start the service
-CMD ["node", "./service/index.js"] 
+CMD ["node", "/liquibase/service/index.js"] 

@@ -677,36 +677,34 @@ app.post('/api/get-config', async (req, res) => {
 app.post('/api/liquibase', async (req, res) => {
   const { command, workingDirectory, options } = req.body;
   
+  if (!command || !workingDirectory) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid request: command and workingDirectory are required'
+    });
+  }
+
   try {
     // First validate the Liquibase setup
-    const validation = await validateLiquibaseSetup(workingDirectory);
-    if (!validation.success) {
+    const setupValidation = await validateLiquibaseSetup(workingDirectory);
+    console.log('Setup validation result:', setupValidation);
+    if (!setupValidation.success) {
       return res.status(400).json({
+        success: false,
         error: 'Invalid Liquibase setup',
-        details: validation.error
+        details: setupValidation.details
       });
     }
 
-    // Execute the command
+    // If validation passed, execute the command
     const result = await executeLiquibaseCommand(workingDirectory, command, options);
-    
-    if (!result.success) {
-      return res.status(500).json({
-        error: result.error,
-        logs: result.logs,
-        command: result.command
-      });
-    }
-
-    res.json({
-      success: true,
-      logs: result.logs,
-      command: result.command
-    });
+    res.json(result);
   } catch (error) {
+    console.error('Liquibase command error:', error);
     res.status(500).json({
+      success: false,
       error: error.message,
-      logs: error.stderr?.split('\n').filter(Boolean)
+      command: command
     });
   }
 });

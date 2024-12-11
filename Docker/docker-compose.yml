@@ -28,6 +28,7 @@ services:
       - "3000:3000"
     volumes:
       - ../server:/app/server
+      - /app/server/node_modules
     depends_on:
       - liquibase
 
@@ -36,4 +37,4 @@ services:
       context: ..
       dockerfile: Docker/Dockerfile.liquibase
     volumes:
-      - ../liquibase:/liquibase/workspace
+      - ../liquibase/workspace:/liquibase/workspace
