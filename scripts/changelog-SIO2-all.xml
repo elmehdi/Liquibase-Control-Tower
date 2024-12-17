@@ -1,0 +1,13 @@
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.3.xsd">
+  
+  <!-- Definition de la version -->
+  <!-- -->
+  <include relativeToChangelogFile="true" file="tag-database.xml"/>
+
+  <!-- Ajouter tous les version à installer -->
+  <include relativeToChangelogFile="true" file="changelog-49-TABLES.xml"/>
+</databaseChangeLog>

@@ -2,8 +2,8 @@ import express from 'express';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { join } from 'path';
-import { existsSync } from 'fs';
-import * as fs from 'fs';
+import { existsSync, constants } from 'fs';
+import { promises as fs } from 'fs';
 
 const execAsync = promisify(exec);
 const app = express();
@@ -122,31 +122,22 @@ app.post('/execute', async (req, res) => {
 });
 
 // Health check endpoint
-app.get('/health', async (req, res) => {
-  try {
-    const { stdout } = await execAsync('liquibase --version');
-    res.json({ 
-      status: 'healthy',
-      version: stdout.trim()
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      status: 'unhealthy',
-      error: error.message
-    });
-  }
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
 });
 
-// Add this endpoint
+// Add validation endpoint
 app.post('/validate', async (req, res) => {
   const { workingDirectory } = req.body;
+  console.log('Validating directory:', workingDirectory);
   
   try {
     const propertiesPath = join(workingDirectory, 'liquibase.properties');
+    console.log('Checking properties file:', propertiesPath);
     
     // Check if liquibase.properties exists
     if (!existsSync(propertiesPath)) {
-      return res.status(400).json({
+      return res.json({
         success: false,
         error: 'liquibase.properties not found',
         details: ['Missing liquibase.properties file in the specified directory']
@@ -154,14 +145,26 @@ app.post('/validate', async (req, res) => {
     }
 
     // Try to read the properties file to ensure it's accessible
-    await fs.promises.access(propertiesPath, fs.constants.R_OK);
+    await fs.access(propertiesPath, constants.R_OK);
+
+    // Try to execute liquibase --version to verify it's accessible
+    try {
+      await execAsync('liquibase --version');
+    } catch (error) {
+      return res.json({
+        success: false,
+        error: 'Liquibase not accessible',
+        details: ['Liquibase command not found or not accessible']
+      });
+    }
 
     res.json({
       success: true,
       details: ['Setup validated successfully']
     });
   } catch (error) {
-    res.status(400).json({
+    console.error('Validation error:', error);
+    res.json({
       success: false,
       error: error.message,
       details: ['Failed to validate Liquibase setup']
@@ -169,7 +172,6 @@ app.post('/validate', async (req, res) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
   console.log(`Liquibase service listening on port ${PORT}`);
-  console.log('Supported commands:', Object.keys(COMMAND_CONFIG).join(', '));
 });

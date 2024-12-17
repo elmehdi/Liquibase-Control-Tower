@@ -122,11 +122,16 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
   const handleAddFile = (category: string) => {
     if (!newFileNames[category].trim()) return;
     
+    // Get the SQL content for the file
+    const content = isAdvancedMode 
+      ? sqlContents[category] || `-- Add your SQL here for ${newFileNames[category].trim()}`
+      : `-- Add your SQL here for ${newFileNames[category].trim()}`;
+    
     setCategoryFiles(prev => ({
       ...prev,
       [category]: [...prev[category], {
         name: newFileNames[category].trim(),
-        content: isAdvancedMode ? (sqlContents[category] || '') : ''
+        content: content
       }]
     }));
     
@@ -134,7 +139,10 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
       ...prev,
       [category]: ''
     }));
-    setSqlContent('');
+    setSqlContents(prev => ({
+      ...prev,
+      [category]: ''
+    }));
   };
 
   const handleRemoveFile = (category: string, fileName: string) => {
@@ -198,15 +206,19 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
               name: cat.name,
               files: categoryFiles[cat.name].map(file => ({
                 name: file.name,
-                content: file.content
+                content: file.content || `-- Add your SQL here for ${file.name}`
               }))
             }))
           }
         })
       });
 
-      if (!response.ok) throw new Error('Build failed');
-      
+      if (!response.ok) {
+        throw new Error('Failed to build structure');
+      }
+
+      setLogs(prev => [...prev, '[SUCCESS] Structure built successfully']);
+
       // Log master changelog creation
       setLogs(prev => [
         ...prev,

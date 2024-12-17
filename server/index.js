@@ -12,6 +12,8 @@ import { executeLiquibaseCommand, validateLiquibaseSetup } from './controllers/l
 import prettier from 'prettier';
 import xml2js from 'xml2js';
 import { v4 as uuidv4 } from 'uuid';
+import { access } from 'fs/promises';
+import path from 'path';
 
 const execAsync = promisify(exec);
 
@@ -54,17 +56,32 @@ const getExistingIncludes = async (filePath) => {
 // Directory validation endpoint
 app.post('/api/validate-directory', async (req, res) => {
   try {
-    const { path } = req.body;
-    await fs.access(path);
-    const stats = await fs.stat(path);
-    if (!stats.isDirectory()) {
-      throw new Error('Selected path is not a directory');
+    const { path: dirPath } = req.body;
+    
+    if (!dirPath) {
+      return res.status(400).json({ 
+        valid: false, 
+        error: 'No directory path provided' 
+      });
     }
-    res.json({ valid: true });
+
+    // Normalize the path for the current operating system
+    const normalizedPath = path.normalize(dirPath);
+
+    try {
+      await access(normalizedPath);
+      res.json({ valid: true });
+    } catch (error) {
+      res.status(400).json({ 
+        valid: false, 
+        error: `Directory not accessible: ${normalizedPath}` 
+      });
+    }
   } catch (error) {
-    res.status(400).json({ 
+    console.error('Error validating directory:', error);
+    res.status(500).json({ 
       valid: false, 
-      error: error.message 
+      error: 'Server error while validating directory' 
     });
   }
 });
@@ -141,7 +158,7 @@ app.post('/api/check-structure', async (req, res) => {
   }
 });
 
-// Add this new endpoint
+// Browse directory endpoint
 app.post('/api/browse-directory', async (req, res) => {
   try {
     let command;
@@ -161,11 +178,11 @@ app.post('/api/browse-directory', async (req, res) => {
     if (selectedPath) {
       res.json({ path: selectedPath });
     } else {
-      res.json({ path: null });
+      res.status(400).json({ error: 'No directory selected' });
     }
   } catch (error) {
-    console.error('Error opening directory dialog:', error);
-    res.status(500).json({ error: 'Failed to open directory dialog' });
+    console.error('Error browsing directory:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -439,7 +456,7 @@ app.post('/api/build-structure', async (req, res) => {
     xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
-                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.3.xsd">
+    http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.3.xsd">
 
     <changeSet id="${file.name}" author="${config.author}">
         <sqlFile path="sql/${file.name}.sql" relativeToChangelogFile="true"/>
@@ -450,7 +467,7 @@ app.post('/api/build-structure', async (req, res) => {
 
           if (!existsSync(fileSqlPath)) {
             const sqlContent = file.content || `-- Add your SQL here for ${file.name}`;
-            await fs.writeFile(fileSqlPath, sqlContent);
+            await fs.writeFile(fileSqlPath, sqlContent + '\n');
           }
 
           // Add to includes if not already present
@@ -466,7 +483,7 @@ app.post('/api/build-structure', async (req, res) => {
     xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
-                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.3.xsd">
+    http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.3.xsd">
 
 ${existingIncludes.map(file => `    <include file="${file}" relativeToChangelogFile="true"/>`).join('\n')}
 </databaseChangeLog>`;
@@ -563,7 +580,7 @@ app.post('/api/apply-fix', async (req, res) => {
   try {
     switch (action) {
       case 'create-xml-and-reference': {
-        const { sqlFile, xmlFile, category, workingDirectory } = details;
+        const { sqlFile, xmlFile, category, workingDirectory, sqlContent } = details;
         
         if (!sqlFile || !category || !workingDirectory) {
           console.error('Missing required fields:', { sqlFile, category, workingDirectory });
@@ -596,6 +613,10 @@ app.post('/api/apply-fix', async (req, res) => {
 </databaseChangeLog>`;
 
           await fs.writeFile(xmlPath, xmlContent);
+          
+          // Create SQL file with content
+          const defaultSqlContent = `-- Add your SQL here for ${baseName}`;
+          await fs.writeFile(sqlPath, sqlContent || defaultSqlContent + '\n');
           
           // Add to changelog if it exists
           const changelogPath = join(workingDirectory, `changelog-49-${category.toUpperCase()}.xml`);

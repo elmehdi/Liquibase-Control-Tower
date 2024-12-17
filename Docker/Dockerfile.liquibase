@@ -9,17 +9,32 @@ RUN apt-get update && apt-get install -y \
     npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Liquibase
-RUN curl -L https://github.com/liquibase/liquibase/releases/download/v4.25.0/liquibase-4.25.0.tar.gz | tar xz -C /opt/ \
-    && ln -s /opt/liquibase/liquibase /usr/local/bin/
+# Install Liquibase with explicit paths and permissions
+WORKDIR /opt
+RUN curl -L https://github.com/liquibase/liquibase/releases/download/v4.25.0/liquibase-4.25.0.tar.gz > liquibase.tar.gz && \
+    mkdir -p liquibase && \
+    tar xzf liquibase.tar.gz -C liquibase --strip-components=1 && \
+    rm liquibase.tar.gz && \
+    echo "Creating liquibase script..." && \
+    echo '#!/bin/sh' > /opt/liquibase/liquibase && \
+    echo 'LIQUIBASE_HOME=/opt/liquibase' >> /opt/liquibase/liquibase && \
+    echo 'CLASSPATH=$LIQUIBASE_HOME/lib/*:$LIQUIBASE_HOME' >> /opt/liquibase/liquibase && \
+    echo 'java -cp "$CLASSPATH" liquibase.integration.commandline.LiquibaseCommandLine "$@"' >> /opt/liquibase/liquibase && \
+    chmod +x /opt/liquibase/liquibase && \
+    chmod -R 755 /opt/liquibase && \
+    ln -sf /opt/liquibase/liquibase /usr/local/bin/liquibase
 
 # Set environment variables
 ENV LIQUIBASE_HOME=/opt/liquibase
 ENV LIQUIBASE_DEFAULTS_FILE=/liquibase/workspace/liquibase.properties
+ENV PATH="/opt/liquibase:${PATH}"
 
 # Set up workspace and service directories
 WORKDIR /liquibase
 RUN mkdir -p workspace service
+
+# Copy Oracle JDBC driver to Liquibase's lib directory
+COPY /lib/ojdbc8.jar /opt/liquibase/lib/
 
 # Copy service files
 COPY liquibase-service/package*.json ./service/
@@ -36,4 +51,4 @@ HEALTHCHECK --interval=30s --timeout=3s \
 EXPOSE 8080
 
 # Start the service
-CMD ["node", "/liquibase/service/index.js"] 
+CMD ["node", "/liquibase/service/index.js"]

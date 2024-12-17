@@ -16,6 +16,9 @@ readonly XML_SCHEMA="http://www.liquibase.org/xml/ns/dbchangelog"
 readonly XML_XSI="http://www.w3.org/2001/XMLSchema-instance"
 readonly XML_LOCATION="http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.3.xsd"
 
+# Add new constant for param option
+readonly PARAM_CATEGORY="data"
+
 # Enhanced logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
@@ -87,7 +90,11 @@ process_sql_files() {
     local version=$3
     local -a sql_files=()
     local category_upper=${category^^}
-    local master_changelog="changelog-$version-${category_upper}.xml"
+    # Only create version-specific changelog for SIO2 option
+    local master_changelog
+    if [ "$category" != "$PARAM_CATEGORY" ]; then
+        master_changelog="changelog-$version-${category_upper}.xml"
+    fi
     
     print_header "SQL Files for $category_upper"
     echo -e "${CYAN}Enter SQL file names one by one${NC}"
@@ -124,20 +131,23 @@ process_sql_files() {
         return 0
     fi
     
-    # Create master changelog if it doesn't exist
-    if [ ! -f "$master_changelog" ]; then
-        # Create initial XML structure without closing tag
-        {
-            echo '<databaseChangeLog'
-            echo "  xmlns=\"$XML_SCHEMA\""
-            echo "  xmlns:xsi=\"$XML_XSI\""
-            echo "  xsi:schemaLocation=\"$XML_SCHEMA"
-            echo "                      $XML_LOCATION\">"
-        } > "$master_changelog"
-    else
-        # Backup the file without the closing tag
-        sed -i.bak '/<\/databaseChangeLog>/d' "$master_changelog"
-        rm -f "${master_changelog}.bak"
+    # Only create/update master changelog for SIO2 option
+    if [ "$category" != "$PARAM_CATEGORY" ]; then
+        # Create master changelog if it doesn't exist
+        if [ ! -f "$master_changelog" ]; then
+            # Create initial XML structure without closing tag
+            {
+                echo '<databaseChangeLog'
+                echo "  xmlns=\"$XML_SCHEMA\""
+                echo "  xmlns:xsi=\"$XML_XSI\""
+                echo "  xsi:schemaLocation=\"$XML_SCHEMA"
+                echo "                      $XML_LOCATION\">"
+            } > "$master_changelog"
+        else
+            # Backup the file without the closing tag
+            sed -i.bak '/<\/databaseChangeLog>/d' "$master_changelog"
+            rm -f "${master_changelog}.bak"
+        fi
     fi
     
     # Create files
@@ -149,8 +159,10 @@ process_sql_files() {
         if [ -f "$sql_file_path" ] && [ ! -f "$xml_file" ]; then
             # Create XML file
             create_xml_file "$xml_file" "$author" "$sql_file"
-            # Append include to master changelog
-            echo "  <include relativeToChangelogFile=\"true\" file=\"$category/$sql_file.xml\"/>" >> "$master_changelog"
+            if [ "$category" != "$PARAM_CATEGORY" ]; then
+                # Append include to master changelog only for SIO2 option
+                echo "  <include relativeToChangelogFile=\"true\" file=\"$category/$sql_file.xml\"/>" >> "$master_changelog"
+            fi
             log_success "Created XML file for existing SQL: $xml_file"
             continue
         fi
@@ -174,15 +186,20 @@ process_sql_files() {
             create_xml_file "$xml_file" "$author" "$sql_file"
         fi
         
-        # Append include to master changelog
-        echo "  <include relativeToChangelogFile=\"true\" file=\"$category/$sql_file.xml\"/>" >> "$master_changelog"
+        if [ "$category" != "$PARAM_CATEGORY" ]; then
+            # Append include to master changelog only for SIO2 option
+            echo "  <include relativeToChangelogFile=\"true\" file=\"$category/$sql_file.xml\"/>" >> "$master_changelog"
+        fi
         
         log_success "Created: $xml_file and $sql_file_path"
     done
     
-    # Add closing tag to master changelog (moved after all includes)
-    echo "</databaseChangeLog>" >> "$master_changelog"
-    log_success "Updated master changelog: $master_changelog"
+    # Only close master changelog for SIO2 option
+    if [ "$category" != "$PARAM_CATEGORY" ]; then
+        # Add closing tag to master changelog
+        echo "</databaseChangeLog>" >> "$master_changelog"
+        log_success "Updated master changelog: $master_changelog"
+    fi
 }
 
 create_structure() {
@@ -280,11 +297,99 @@ EOL
     log_success "Updated main changelog: $main_changelog"
 }
 
-# Modify the main function to include the update_main_changelog call
+# Add new function for param changelog
+update_param_changelog() {
+    local version=$1
+    local param_changelog="changelog-Order-Managers-Param-DATA.xml"
+    
+    # Create or truncate the param changelog file
+    cat > "$param_changelog" << EOL
+<databaseChangeLog
+  xmlns="$XML_SCHEMA"
+  xmlns:xsi="$XML_XSI"
+  xsi:schemaLocation="$XML_SCHEMA
+                      $XML_LOCATION">
+  
+  <!-- Definition de la version -->
+  <!-- -->
+  <include relativeToChangelogFile="true" file="tag-database.xml"/>
+
+  <!-- Ajouter les changements de données -->
+EOL
+    
+    # Add data changelog files if they exist
+    if [ -d "$PARAM_CATEGORY" ]; then
+        for xml_file in "$PARAM_CATEGORY"/*.xml; do
+            if [ -f "$xml_file" ]; then
+                echo "  <include relativeToChangelogFile=\"true\" file=\"$xml_file\"/>" >> "$param_changelog"
+                log_success "Added $(basename "$xml_file") to param changelog"
+            fi
+        done
+    fi
+    
+    # Close the changelog
+    echo "</databaseChangeLog>" >> "$param_changelog"
+    log_success "Updated param changelog: $param_changelog"
+}
+
+# Add function to handle param workflow
+handle_param_option() {
+    local author=$1
+    local version=$2
+    
+    print_header "Processing Param Category"
+    
+    # Create data directory structure
+    if ! create_directory_structure "$PARAM_CATEGORY"; then
+        log_error "Failed to create data directory structure"
+        return 1
+    fi
+    
+    # Process SQL files for data category
+    process_sql_files "$PARAM_CATEGORY" "$author" "$version"
+    
+    # Update the param changelog
+    update_param_changelog "$version"
+}
+
+# Add function to handle SIO2 workflow
+handle_sio2_option() {
+    local author=$1
+    local version=$2
+    
+    print_header "Processing SIO2-Back Categories"
+    
+    # Process each category
+    for category in "${CATEGORIES[@]}"; do
+        if ! create_structure "$author" "$version" "$category"; then
+            log_error "Failed to process $category"
+            continue
+        fi
+    done
+    
+    # Update the main changelog
+    update_main_changelog "$version"
+}
+
+# Modified main function to include option selection
 main() {
     print_header "Liquibase Changelog Generator"
     
-    local author version
+    local author version option
+    
+    # Present options
+    echo -e "${CYAN}Please select an option:${NC}"
+    echo -e "1. SIO2-Back"
+    echo -e "2. Param"
+    
+    while true; do
+        read -rp $'\033[0;36m>\033[0m ' option
+        if [[ "$option" =~ ^[12]$ ]]; then
+            break
+        else
+            echo -e "${RED}Invalid option. Please select 1 or 2${NC}"
+        fi
+    done
     
     # Get and validate author
     while true; do
@@ -297,7 +402,6 @@ main() {
     
     # Check for existing tag-database.xml and get version
     if ! version=$(get_version_from_tag); then
-        # If tag-database.xml doesn't exist, ask for version
         while true; do
             echo -e "\n${CYAN}Please enter the version number:${NC}"
             read -rp $'\033[0;36m>\033[0m ' version
@@ -312,16 +416,15 @@ main() {
     
     print_separator
     
-    # Process each category
-    for category in "${CATEGORIES[@]}"; do
-        if ! create_structure "$author" "$version" "$category"; then
-            log_error "Failed to process $category"
-            continue
-        fi
-    done
-    
-    # Update the main changelog
-    update_main_changelog "$version"
+    # Handle selected option
+    case $option in
+        1)
+            handle_sio2_option "$author" "$version"
+            ;;
+        2)
+            handle_param_option "$author" "$version"
+            ;;
+    esac
     
     print_separator
     log_success "Structure creation completed successfully!"
@@ -332,5 +435,5 @@ main() {
     read -r
 }
 
-# Execute main function
+# Simply call main
 main

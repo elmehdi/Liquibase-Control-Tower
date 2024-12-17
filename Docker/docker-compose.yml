@@ -37,4 +37,4 @@ services:
       context: ..
       dockerfile: Docker/Dockerfile.liquibase
     volumes:
-      - ../liquibase/workspace:/liquibase/workspace
+      - ../liquibase:/liquibase/workspace

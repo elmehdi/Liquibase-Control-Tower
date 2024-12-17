@@ -2,6 +2,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { promises as fs } from 'fs';
 import fetch from 'node-fetch';
 
 const execAsync = promisify(exec);
@@ -81,6 +82,18 @@ export const executeLiquibaseCommand = async (workingDirectory, command, options
 
 export const validateLiquibaseSetup = async (workingDirectory) => {
   console.log('Original working directory:', workingDirectory);
+  
+  // First check if the working directory exists in the backend container
+  try {
+    await fs.access(workingDirectory);
+  } catch (error) {
+    console.error('Working directory not accessible in backend:', error);
+    return {
+      success: false,
+      error: 'Working directory not accessible',
+      details: [`Cannot access directory: ${workingDirectory}`]
+    };
+  }
   
   // Convert the working directory path to the correct path in the Liquibase container
   const liquibaseWorkingDir = workingDirectory.replace('/app', '/liquibase/workspace');

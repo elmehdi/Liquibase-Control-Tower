@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { FolderOpen } from 'lucide-react';
 
 interface DirectorySelectorProps {
@@ -6,27 +6,39 @@ interface DirectorySelectorProps {
 }
 
 export const DirectorySelector: React.FC<DirectorySelectorProps> = ({ onSelect }) => {
-  const [inputPath, setInputPath] = React.useState('C:\\Users\\efetouak\\OneDrive - Capgemini\\Desktop\\BzBz\\testo');
-  const [error, setError] = React.useState('');
+  const [inputPath, setInputPath] = useState('');
+  const [error, setError] = useState('');
 
   const validateDirectory = async (path: string) => {
     try {
+      // Normalize Windows path
+      const normalizedPath = path.replace(/\\/g, '\\\\');
+      console.log('Normalized path:', normalizedPath);
+
       const response = await fetch('http://localhost:3000/api/validate-directory', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ path }),
+        body: JSON.stringify({ path: normalizedPath }),
       });
-
+  
+      if (!response.ok) {
+        const data = await response.json();
+        console.error('Validation failed:', data);
+        throw new Error(data.error || 'Failed to validate directory');
+      }
+  
       const data = await response.json();
+      
       if (data.valid) {
         onSelect(path);
       } else {
         setError(data.error || 'Invalid directory');
       }
     } catch (error) {
-      setError('Failed to validate directory. Please try again.');
+      console.error('Validation error:', error);
+      setError(error.message || 'Failed to validate directory');
     }
   };
 

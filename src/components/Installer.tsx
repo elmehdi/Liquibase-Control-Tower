@@ -33,7 +33,8 @@ interface CommandOption {
   buttonColor?: string;
 }
 
-export const Installer: React.FC<InstallerProps> = ({ workingDirectory }) => {
+export const Installer: React.FC<InstallerProps> = () => {
+  const workingDirectory = '/app';
   const [selectedCommand, setSelectedCommand] = useState<LiquibaseCommand | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [isExecuting, setIsExecuting] = useState(false);
