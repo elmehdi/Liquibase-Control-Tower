@@ -1,11 +1,10 @@
 import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { promises as fs } from 'fs';
+import { promises as fs, existsSync } from 'fs';
 import xmlFormatter from 'xml-formatter';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { existsSync } from 'fs';
 import { createChangelogXML } from './utils/xml.js';
 import { basename } from 'path';
 import { executeLiquibaseCommand, validateLiquibaseSetup } from './controllers/liquibase.js';
@@ -54,18 +53,30 @@ const getExistingIncludes = async (filePath) => {
 // Directory validation endpoint
 app.post('/api/validate-directory', async (req, res) => {
   try {
+    console.log('Validating directory:', req.body);
     const { path } = req.body;
-    await fs.access(path);
-    const stats = await fs.stat(path);
-    if (!stats.isDirectory()) {
-      throw new Error('Selected path is not a directory');
+    
+    if (!path) {
+      console.log('No path provided');
+      return res.json({ valid: false, error: 'No directory path provided' });
     }
-    res.json({ valid: true });
+
+    try {
+      const stats = await fs.stat(path);
+      if (!stats.isDirectory()) {
+        console.log('Not a directory:', path);
+        return res.json({ valid: false, error: 'Not a directory' });
+      }
+
+      console.log('Directory validated successfully:', path);
+      res.json({ valid: true });
+    } catch (error) {
+      console.log('Directory validation failed:', error.message);
+      res.json({ valid: false, error: `Directory validation failed: ${error.message}` });
+    }
   } catch (error) {
-    res.status(400).json({ 
-      valid: false, 
-      error: error.message 
-    });
+    console.error('Error validating directory:', error);
+    res.status(500).json({ error: 'Failed to validate directory' });
   }
 });
 
@@ -141,28 +152,21 @@ app.post('/api/check-structure', async (req, res) => {
   }
 });
 
-// Add this new endpoint
+// Directory browser endpoint
 app.post('/api/browse-directory', async (req, res) => {
   try {
-    let command;
-    if (process.platform === 'win32') {
-      command = 'powershell.exe -command "Add-Type -AssemblyName System.Windows.Forms; ' +
-                '$folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog; ' +
-                '[void]$folderBrowser.ShowDialog(); ' +
-                '$folderBrowser.SelectedPath"';
-    } else {
-      // For Linux/Mac (requires zenity)
-      command = 'zenity --file-selection --directory';
-    }
-
-    const { stdout } = await execAsync(command);
+    const command = `powershell -Command "$f = New-Object System.Windows.Forms.FolderBrowserDialog; $null = [System.Windows.Forms.Application]::EnableVisualStyles(); $f.Description = 'Select a folder'; $result = $f.ShowDialog(); if ($result -eq 'OK') { $f.SelectedPath }"`;
+    const { stdout, stderr } = await execAsync(command);
     const selectedPath = stdout.trim();
-
-    if (selectedPath) {
-      res.json({ path: selectedPath });
-    } else {
-      res.json({ path: null });
+    
+    if (!selectedPath) {
+      return res.status(400).json({ error: 'No directory selected' });
     }
+
+    // Log for debugging
+    console.log('Selected path:', selectedPath);
+    
+    res.json({ path: selectedPath });
   } catch (error) {
     console.error('Error opening directory dialog:', error);
     res.status(500).json({ error: 'Failed to open directory dialog' });
@@ -481,7 +485,7 @@ ${existingIncludes.map(file => `    <include file="${file}" relativeToChangelogF
 
     if (existsSync(mainChangelogPath)) {
       // Read existing content
-      const existingContent = await fs.readFile(mainChangelogPath, 'utf8');
+      const existingContent = await fs.readFile(mainChangelogPath, 'utf-8');
       
       // Find the closing tag position
       const closingTagIndex = existingContent.lastIndexOf('</databaseChangeLog>');
@@ -615,6 +619,59 @@ app.post('/api/apply-fix', async (req, res) => {
         }
         break;
       }
+
+      case 'add-to-changelog': {
+        const { xmlFile, changelogFile, workingDirectory } = details;
+        
+        if (!xmlFile || !changelogFile || !workingDirectory) {
+          console.error('Missing required fields:', { xmlFile, changelogFile, workingDirectory });
+          return res.status(400).json({ error: 'Missing required fields' });
+        }
+
+        console.log('Adding XML to changelog:', { xmlFile, changelogFile });
+
+        try {
+          const changelogPath = join(workingDirectory, changelogFile);
+          
+          // Check if changelog exists
+          if (!(await fs.access(changelogPath).then(() => true).catch(() => false))) {
+            throw new Error(`Changelog file ${changelogFile} does not exist`);
+          }
+
+          // Read current changelog content
+          let changelogContent = await fs.readFile(changelogPath, 'utf-8');
+          
+          // Check if the XML is already included
+          if (changelogContent.includes(`file="${xmlFile}"`)) {
+            return res.json({ success: true, message: 'XML already included in changelog' });
+          }
+
+          // Add the new include before the closing tag
+          const insertPoint = changelogContent.lastIndexOf('</databaseChangeLog>');
+          if (insertPoint === -1) {
+            throw new Error('Invalid changelog format: missing closing tag');
+          }
+
+          const newEntry = `    <include file="${xmlFile}" relativeToChangelogFile="true"/>\n`;
+          changelogContent = changelogContent.slice(0, insertPoint) + newEntry + changelogContent.slice(insertPoint);
+
+          // Format the XML content
+          const formattedContent = xmlFormatter(changelogContent, {
+            indentation: '    ',
+            collapseContent: true,
+            lineSeparator: '\n'
+          });
+
+          // Write back to file
+          await fs.writeFile(changelogPath, formattedContent);
+          console.log('Successfully added XML to changelog');
+          res.json({ success: true });
+        } catch (fileError) {
+          console.error('File operation error:', fileError);
+          throw fileError;
+        }
+        break;
+      }
       
       default:
         console.error('Unknown action type:', action);
@@ -622,7 +679,7 @@ app.post('/api/apply-fix', async (req, res) => {
     }
   } catch (error) {
     console.error('Server error while applying fix:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: error.message,
       details: error.stack
     });
@@ -677,10 +734,16 @@ app.post('/api/get-config', async (req, res) => {
 app.post('/api/liquibase', async (req, res) => {
   const { command, workingDirectory, options } = req.body;
   
+  console.log('Received liquibase request:', { command, workingDirectory, options });
+  
   try {
     // First validate the Liquibase setup
+    console.log('Validating Liquibase setup...');
     const validation = await validateLiquibaseSetup(workingDirectory);
+    console.log('Validation result:', validation);
+    
     if (!validation.success) {
+      console.log('Validation failed:', validation.error);
       return res.status(400).json({
         error: 'Invalid Liquibase setup',
         details: validation.error
@@ -688,9 +751,11 @@ app.post('/api/liquibase', async (req, res) => {
     }
 
     // Execute the command
+    console.log('Executing Liquibase command...');
     const result = await executeLiquibaseCommand(workingDirectory, command, options);
     
     if (!result.success) {
+      console.log('Command failed:', result.error);
       return res.status(500).json({
         error: result.error,
         logs: result.logs,
@@ -698,12 +763,14 @@ app.post('/api/liquibase', async (req, res) => {
       });
     }
 
+    console.log('Command succeeded');
     res.json({
       success: true,
       logs: result.logs,
       command: result.command
     });
   } catch (error) {
+    console.error('Unexpected error:', error);
     res.status(500).json({
       error: error.message,
       logs: error.stderr?.split('\n').filter(Boolean)

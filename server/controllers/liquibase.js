@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { join } from 'path';
+import { access } from 'fs/promises';
 
 const execAsync = promisify(exec);
 
@@ -39,23 +40,23 @@ export const executeLiquibaseCommand = async (workingDirectory, command, options
 
 export const validateLiquibaseSetup = async (workingDirectory) => {
   try {
-    // Check if liquibase.properties exists
-    const { stdout: version } = await execAsync('liquibase --version');
-    const { stdout: status } = await execAsync(
-      `liquibase --defaultsFile=${join(workingDirectory, 'liquibase.properties')} status`,
-      { cwd: workingDirectory }
-    );
+    console.log('Validating Liquibase setup for directory:', workingDirectory);
+    const liquibasePath = 'c:\\Users\\efetouak\\Downloads\\liquibase-4.31.0\\liquibase.bat';
+    
+    // Just check if liquibase is available
+    console.log('Checking Liquibase version...');
+    const { stdout: version } = await execAsync(`${liquibasePath} --version`);
+    console.log('Liquibase version:', version.trim());
 
     return {
       success: true,
-      version: version.trim(),
-      status: status.split('\n').filter(Boolean)
+      version: version.trim()
     };
   } catch (error) {
+    console.error('Liquibase validation error:', error);
     return {
       success: false,
-      error: error.message,
-      details: error.stderr?.split('\n').filter(Boolean)
+      error: error.message
     };
   }
-}; 
+};

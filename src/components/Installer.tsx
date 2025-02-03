@@ -144,6 +144,7 @@ export const Installer: React.FC<InstallerProps> = ({ workingDirectory }) => {
   const executeCommand = async (command: LiquibaseCommand) => {
     setIsExecuting(true);
     setLogs(prev => [...prev, `Executing liquibase ${command}...`]);
+    console.log('Executing command with working directory:', workingDirectory);
 
     try {
       const options: any = {};
@@ -157,6 +158,7 @@ export const Installer: React.FC<InstallerProps> = ({ workingDirectory }) => {
         }
       }
 
+      console.log('Sending request with:', { command, workingDirectory, options });
       const response = await fetch('http://localhost:3000/api/liquibase', {
         method: 'POST',
         headers: {
@@ -170,8 +172,10 @@ export const Installer: React.FC<InstallerProps> = ({ workingDirectory }) => {
       });
 
       const data = await response.json();
+      console.log('Received response:', data);
 
       if (!data.success) {
+        console.error('Command failed:', data.error, data.details);
         setLogs(prev => [
           ...prev,
           `❌ Error executing ${command}:`,
@@ -349,4 +353,4 @@ export const Installer: React.FC<InstallerProps> = ({ workingDirectory }) => {
       </motion.div>
     </div>
   );
-}; 
+};
