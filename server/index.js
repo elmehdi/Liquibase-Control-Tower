@@ -155,7 +155,7 @@ app.post('/api/check-structure', async (req, res) => {
 // Directory browser endpoint
 app.post('/api/browse-directory', async (req, res) => {
   try {
-    const command = `powershell -Command "$f = New-Object System.Windows.Forms.FolderBrowserDialog; $null = [System.Windows.Forms.Application]::EnableVisualStyles(); $f.Description = 'Select a folder'; $result = $f.ShowDialog(); if ($result -eq 'OK') { $f.SelectedPath }"`;
+    const command = `powershell -Command "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Select a folder'; $f.ShowNewFolderButton = $true; if ($f.ShowDialog() -eq 'OK') { $f.SelectedPath }"`;
     const { stdout, stderr } = await execAsync(command);
     const selectedPath = stdout.trim();
     
@@ -169,7 +169,7 @@ app.post('/api/browse-directory', async (req, res) => {
     res.json({ path: selectedPath });
   } catch (error) {
     console.error('Error opening directory dialog:', error);
-    res.status(500).json({ error: 'Failed to open directory dialog' });
+    res.status(500).json({ error: 'Failed to open directory dialog. Please try again or enter the path manually.' });
   }
 });
 
@@ -347,21 +347,70 @@ app.post('/api/check-main-changelog', async (req, res) => {
   const logs = [];
   let errors = 0;
 
-  try {
-    const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
+//   try {
+//     const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
     
-    if (!await fs.access(mainChangelogPath).then(() => true).catch(() => false)) {
-      logs.push({
-        type: 'error',
-        category: 'system',
-        message: 'Main changelog file not found: changelog-SIO2-all.xml'
-      });
-      errors++;
-      return res.json({ errors, logs });
-    }
+//     if (!await fs.access(mainChangelogPath).then(() => true).catch(() => false)) {
+//       logs.push({
+//         type: 'error',
+//         category: 'system',
+//         message: 'Main changelog file not found: changelog-SIO2-all.xml'
+//       });
+//       errors++;
+//       return res.json({ errors, logs });
+//     }
 
-    const content = await fs.readFile(mainChangelogPath, 'utf-8');
+//     const content = await fs.readFile(mainChangelogPath, 'utf-8');
 
+//     const categories = ['TABLES', 'VIEWS', 'MATERIALIZED_VIEWS', 'PROCEDURES', 'SEQUENCES'];
+//     for (const category of categories) {
+//       const categoryChangelog = `changelog-${version}-${category}.xml`;
+//       const changelogPath = join(workingDirectory, categoryChangelog);
+      
+//       if (await fs.access(changelogPath).then(() => true).catch(() => false)) {
+//         if (!content.includes(`file="${categoryChangelog}"`)) {
+//           logs.push({
+//             type: 'error',
+//             category: 'main_changelog',
+//             message: `Existing changelog '${categoryChangelog}' is not declared in changelog-SIO2-all.xml`
+//           });
+//           errors++;
+//         }
+//       }
+//     }
+
+//     res.json({ errors, logs });
+//   } catch (error) {
+//     console.error('Error checking main changelog:', error);
+//     res.status(500).json({ error: error.message });
+//   }
+// });
+
+try {
+  const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
+  const orderManagersChangelogPath = join(workingDirectory, 'changelog-Order-Managers-Param-DATA.xml');
+  
+  let mainChangelog = 'changelog-SIO2-all.xml'; // Default changelog
+  
+  if (await fs.access(orderManagersChangelogPath).then(() => true).catch(() => false)) {
+    mainChangelog = 'changelog-Order-Managers-Param-DATA.xml'; // Change to special case
+  }
+
+  const mainChangelogPathToCheck = join(workingDirectory, mainChangelog);
+  
+  if (!await fs.access(mainChangelogPathToCheck).then(() => true).catch(() => false)) {
+    logs.push({
+      type: 'error',
+      category: 'system',
+      message: `Main changelog file not found: ${mainChangelog}`
+    });
+    errors++;
+    return res.json({ errors, logs });
+  }
+
+  const content = await fs.readFile(mainChangelogPathToCheck, 'utf-8');
+
+  if (mainChangelog === 'changelog-SIO2-all.xml') {
     const categories = ['TABLES', 'VIEWS', 'MATERIALIZED_VIEWS', 'PROCEDURES', 'SEQUENCES'];
     for (const category of categories) {
       const categoryChangelog = `changelog-${version}-${category}.xml`;
@@ -378,17 +427,33 @@ app.post('/api/check-main-changelog', async (req, res) => {
         }
       }
     }
-
-    res.json({ errors, logs });
-  } catch (error) {
-    console.error('Error checking main changelog:', error);
-    res.status(500).json({ error: error.message });
+  } else if (mainChangelog === 'changelog-Order-Managers-Param-DATA.xml') {
+    const categoryChangelog = 'changelog-Order-Managers-Param-DATA.xml';
+    // Check if 'data' is included in the main changelog, if not, log an error
+    if (!content.includes(`file="${categoryChangelog}"`)) {
+      logs.push({
+        type: 'error',
+        category: 'main_changelog',
+        message: `Changelog '${categoryChangelog}' is not declared in changelog-Order-Managers-Param-DATA.xml`
+      });
+      errors++;
+    }
   }
+
+  res.json({ errors, logs });
+} catch (error) {
+  console.error('Error checking main changelog:', error);
+  res.status(500).json({ error: error.message });
+}
 });
+
 
 app.post('/api/build-structure', async (req, res) => {
   const { workingDirectory, config } = req.body;
-  
+  if (category.name.toLowerCase() === 'data') {
+    console.log('Building data structure...');
+  }
+
   try {
     // Create tag-database.xml if it doesn't exist
     const tagPath = join(workingDirectory, 'tag-database.xml');
@@ -417,7 +482,11 @@ app.post('/api/build-structure', async (req, res) => {
         await fs.mkdir(categorySqlPath, { recursive: true });
 
         // Create or update category changelog
-        const categoryChangelogPath = join(workingDirectory, `changelog-${config.version}-${category.name.toUpperCase()}.xml`);
+        console.log(category.name.toLowerCase());
+        const categoryChangelogPath = category.name.toLowerCase() === 'data'
+  ? join(workingDirectory, 'changelog-Order-Managers-Param-DATA.xml')
+  : join(workingDirectory, `changelog-${config.version}-${category.name.toUpperCase()}.xml`);
+
         let categoryChangelogContent = '';
         let existingIncludes = [];
 
@@ -452,10 +521,9 @@ app.post('/api/build-structure', async (req, res) => {
             await fs.writeFile(xmlPath, xmlContent);
           }
 
-          if (!existsSync(fileSqlPath)) {
-            const sqlContent = file.content || `-- Add your SQL here for ${file.name}`;
-            await fs.writeFile(fileSqlPath, sqlContent);
-          }
+          // Always write the SQL content, whether the file exists or not
+          const sqlContent = file.content || `-- Add your SQL here for ${file.name}`;
+          await fs.writeFile(fileSqlPath, sqlContent);
 
           // Add to includes if not already present
           const includePath = `${category.name}/${file.name}.xml`;
@@ -480,7 +548,9 @@ ${existingIncludes.map(file => `    <include file="${file}" relativeToChangelogF
     }
 
     // Update main changelog (changelog-SIO2-all.xml)
-    const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
+    const mainChangelogPath = isDataCategory
+      ? join(workingDirectory, 'changelog-Order-Managers-Param-DATA.xml')  // Data updates this file instead
+      : join(workingDirectory, 'changelog-SIO2-all.xml');
     let mainChangelogContent;
 
     if (existsSync(mainChangelogPath)) {
@@ -504,18 +574,41 @@ ${existingIncludes.map(file => `    <include file="${file}" relativeToChangelogF
         }
 
         // Add only new category changelogs
+        // const newIncludes = config.categories
+        //   .filter(cat => cat.files && cat.files.length > 0)
+        //   .map(cat => `changelog-${config.version}-${cat.name.toUpperCase()}.xml`)
+        //   .filter(file => !existingIncludes.has(file))
+        //   .map(file => `    <include file="${file}" relativeToChangelogFile="true"/>`)
+        //   .join('\n');
+
         const newIncludes = config.categories
-          .filter(cat => cat.files && cat.files.length > 0)
-          .map(cat => `changelog-${config.version}-${cat.name.toUpperCase()}.xml`)
-          .filter(file => !existingIncludes.has(file))
-          .map(file => `    <include file="${file}" relativeToChangelogFile="true"/>`)
-          .join('\n');
+            .filter(cat => cat.files && cat.files.length > 0 && cat.name.toLowerCase() !== 'data')  // ✅ Exclude "data"
+            .map(cat => `changelog-${config.version}-${cat.name.toUpperCase()}.xml`)
+            .filter(file => !existingIncludes.has(file))
+            .map(file => `    <include file="${file}" relativeToChangelogFile="true"/>`)
+            .join('\n');
+
 
         // Only add newIncludes if there are any
         mainChangelogContent = `${contentWithoutClosing}${newIncludes ? '\n' + newIncludes : ''}\n</databaseChangeLog>`;
       }
     } else {
       // Create new main changelog if it doesn't exist
+      if (category.name.toLowerCase() === 'data') {
+        mainChangelogContent = `<?xml version="1.0" encoding="UTF-8"?>
+    <databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                          http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.3.xsd">
+    
+        <include file="tag-database.xml" relativeToChangelogFile="true"/>
+    
+        <!-- DML Inserts -->
+        ${category.files.map(file => `    <include relativeToChangelogFile="true" file="data/${file}"/>`).join('\n')}
+    </databaseChangeLog>`;
+    }
+    else {
       mainChangelogContent = `<?xml version="1.0" encoding="UTF-8"?>
 <databaseChangeLog
     xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
@@ -534,7 +627,7 @@ ${config.categories
         .join('\n')}
 </databaseChangeLog>`;
     }
-
+  }
     await fs.writeFile(mainChangelogPath, mainChangelogContent);
 
     res.json({ success: true });

@@ -17,7 +17,8 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
     { name: 'views', label: 'Views' },
     { name: 'materialized_views', label: 'Materialized Views' },
     { name: 'procedures', label: 'Procedures' },
-    { name: 'sequences', label: 'Sequences' }
+    { name: 'sequences', label: 'Sequences' },
+    { name: 'data', label: 'Data' }
   ]);
 
   const [author, setAuthor] = useState('');
@@ -28,7 +29,8 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
     views: '',
     materialized_views: '',
     procedures: '',
-    sequences: ''
+    sequences: '',
+    data: ''
   });
   const [logs, setLogs] = useState<string[]>([]);
   const [isBuilding, setIsBuilding] = useState(false);
@@ -41,7 +43,8 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
     views: [],
     materialized_views: [],
     procedures: [],
-    sequences: []
+    sequences: [],
+    data: []
   });
 
   const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
@@ -122,11 +125,14 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
   const handleAddFile = (category: string) => {
     if (!newFileNames[category].trim()) return;
     
+    const fileName = newFileNames[category].trim();
+    const content = isAdvancedMode ? sqlContents[category] || '' : '';
+    
     setCategoryFiles(prev => ({
       ...prev,
       [category]: [...prev[category], {
-        name: newFileNames[category].trim(),
-        content: isAdvancedMode ? (sqlContents[category] || '') : ''
+        name: fileName,
+        content: content
       }]
     }));
     
@@ -134,7 +140,10 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
       ...prev,
       [category]: ''
     }));
-    setSqlContent('');
+    setSqlContents(prev => ({
+      ...prev,
+      [category]: ''
+    }));
   };
 
   const handleRemoveFile = (category: string, fileName: string) => {
@@ -226,8 +235,14 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
         return newState;
       });
 
-      // Clear SQL content and reset current category
-      setSqlContent('');
+      // Clear SQL contents and reset current category
+      setSqlContents(prev => {
+        const newState = { ...prev };
+        categories.forEach(cat => {
+          newState[cat.name] = '';
+        });
+        return newState;
+      });
       setCurrentCategory(null);
       
       setLogs(prev => [...prev, '\n[SUCCESS] Build completed successfully']);
@@ -308,6 +323,7 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
               onClick={handleBuild}
               disabled={isBuilding || 
                        !author.trim() || 
+                       !version.trim() || isNaN(Number(version)) || 
                        Object.values(categoryFiles).every(files => files.length === 0) ||
                        Object.values(newFileNames).some(name => name.trim() !== '')}
               className="bg-blue-600 text-white px-6 py-2.5 rounded-lg 
@@ -450,8 +466,8 @@ export const Generator: React.FC<GeneratorProps> = ({ workingDirectory }) => {
                       <div className="relative">
                         <Code2 size={16} className="absolute top-3 left-3 text-gray-400" />
                         <textarea
-                          value={sqlContent}
-                          onChange={(e) => setSqlContent(e.target.value)}
+                          value={sqlContents[category.name] || ''}
+                          onChange={(e) => handleSqlContentChange(category.name, e.target.value)}
                           className="w-full px-9 py-2 border border-gray-200 rounded-md 
                                    font-mono text-sm min-h-[100px] resize-y
                                    focus:ring-2 focus:ring-blue-500 focus:border-blue-500
