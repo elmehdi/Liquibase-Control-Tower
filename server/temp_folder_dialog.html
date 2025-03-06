@@ -1,0 +1,24 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Select Folder</title>
+          <script>
+            function selectFolder() {
+              const input = document.getElementById('folderInput');
+              input.click();
+              input.onchange = function() {
+                const path = input.value;
+                document.getElementById('result').innerText = path;
+                // Close the window after selection
+                setTimeout(() => window.close(), 500);
+              };
+            }
+          </script>
+        </head>
+        <body onload="selectFolder()">
+          <input type="file" id="folderInput" webkitdirectory directory style="display:none" />
+          <div id="result" style="display:none"></div>
+        </body>
+        </html>
+      

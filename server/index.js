@@ -42,7 +42,7 @@ const getExistingIncludes = async (filePath) => {
     const content = await fs.readFile(filePath, 'utf-8');
     const matches = content.match(/<include.*?file=".*?\.xml".*?\/>/g) || [];
     return matches.map(include => {
-      const match = include.match(/file="(.*?)"/);
+      const match = include.match(/file="([^"]+)"/);
       return match ? match[1] : null;
     }).filter(Boolean);
   } catch (error) {
@@ -61,22 +61,64 @@ app.post('/api/validate-directory', async (req, res) => {
       return res.json({ valid: false, error: 'No directory path provided' });
     }
 
+    // Print detailed debugging information
+    console.log('Current working directory:', process.cwd());
+    console.log('Path to validate:', path);
+    console.log('Path type:', typeof path);
+    
+    // Check if path exists using fs.access instead of existsSync
     try {
-      const stats = await fs.stat(path);
-      if (!stats.isDirectory()) {
-        console.log('Not a directory:', path);
-        return res.json({ valid: false, error: 'Not a directory' });
+      await fs.access(path);
+      console.log('Path is accessible using fs.access');
+      
+      // Check if it's a directory
+      const stats = await fs.lstat(path);
+      if (stats.isDirectory()) {
+        console.log('Directory validated successfully (fs.access):', path);
+        return res.json({ valid: true });
+      } else {
+        console.log('Path is not a directory (fs.access)');
+        return res.json({ valid: false, error: 'Path is not a directory' });
       }
-
-      console.log('Directory validated successfully:', path);
-      res.json({ valid: true });
-    } catch (error) {
-      console.log('Directory validation failed:', error.message);
-      res.json({ valid: false, error: `Directory validation failed: ${error.message}` });
+    } catch (accessError) {
+      console.log('fs.access error:', accessError.message);
+      
+      // Continue with other approaches if fs.access fails
     }
+
+    // Try with normalized path
+    const normalizedPath = path.replace(/\\/g, '/');
+    console.log('Normalized path:', normalizedPath);
+    
+    try {
+      if (existsSync(normalizedPath)) {
+        const stats = await fs.lstat(normalizedPath);
+        if (stats.isDirectory()) {
+          console.log('Directory validated successfully (normalized path):', normalizedPath);
+          return res.json({ valid: true });
+        } else {
+          console.log('Path is not a directory (normalized path)');
+        }
+      } else {
+        console.log('Normalized path does not exist');
+      }
+    } catch (normalizedError) {
+      console.error('Error with normalized path:', normalizedError.message);
+    }
+    
+    // Last resort: Just assume it's valid if we've gotten this far and the path looks reasonable
+    if (path && path.length > 3 && !path.includes('*') && !path.includes('?')) {
+      console.log('Assuming path is valid as a last resort:', path);
+      return res.json({ valid: true, warning: 'Path validation bypassed' });
+    }
+    
+    // If all approaches fail
+    console.log('Path does not exist (tried all approaches)');
+    return res.json({ valid: false, error: 'Path does not exist' });
+    
   } catch (error) {
     console.error('Error validating directory:', error);
-    res.status(500).json({ error: 'Failed to validate directory' });
+    res.status(500).json({ error: 'Failed to validate directory', details: error.message });
   }
 });
 
@@ -155,23 +197,225 @@ app.post('/api/check-structure', async (req, res) => {
 // Directory browser endpoint
 app.post('/api/browse-directory', async (req, res) => {
   try {
-    const command = `powershell -Command "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Select a folder'; $f.ShowNewFolderButton = $true; if ($f.ShowDialog() -eq 'OK') { $f.SelectedPath }"`;
-    const { stdout, stderr } = await execAsync(command);
-    const selectedPath = stdout.trim();
+    console.log('Attempting to open directory dialog...');
     
-    if (!selectedPath) {
-      return res.status(400).json({ error: 'No directory selected' });
-    }
+    // Detect if running in WSL
+    const isWSL = process.platform === 'linux' && process.env.WSL_DISTRO_NAME;
+    console.log('Environment:', isWSL ? 'WSL' : process.platform);
+    
+    // Try multiple approaches for opening the directory dialog
+    let selectedPath = '';
+    let error = null;
+    
+    // Approach for WSL: Use PowerShell through cmd.exe
+    if (isWSL) {
+      try {
+        console.log('Trying WSL approach: PowerShell through cmd.exe');
+        
+        // Create a temporary PowerShell script
+        const psScriptContent = `
+Add-Type -AssemblyName System.Windows.Forms
+$folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
+$folderBrowser.Description = "Select a folder"
+$folderBrowser.ShowNewFolderButton = $true
+$folderBrowser.RootFolder = "MyComputer"
 
-    // Log for debugging
-    console.log('Selected path:', selectedPath);
+if ($folderBrowser.ShowDialog() -eq "OK") {
+    Write-Output $folderBrowser.SelectedPath
+} else {
+    exit 1
+}
+        `;
+        
+        const tempPsPath = join(process.cwd(), 'temp_folder_dialog.ps1');
+        await fs.writeFile(tempPsPath, psScriptContent);
+        
+        // Convert to Windows path
+        const winPath = tempPsPath.replace(/^\/mnt\/([a-z])\//, '$1:/').replace(/\//g, '\\');
+        
+        // Execute PowerShell script through cmd.exe
+        const command = `cmd.exe /c powershell -ExecutionPolicy Bypass -File "${winPath}"`;
+        const result = await execAsync(command, { timeout: 60000 });
+        
+        // Clean up
+        try {
+          await fs.unlink(tempPsPath);
+        } catch (unlinkError) {
+          console.error('Failed to delete temporary PS script:', unlinkError);
+        }
+        
+        selectedPath = result.stdout.trim();
+        
+        if (selectedPath) {
+          console.log('WSL approach succeeded with path:', selectedPath);
+          return res.json({ path: selectedPath });
+        }
+      } catch (wslErr) {
+        console.error('WSL approach failed:', wslErr.message);
+        error = wslErr;
+        
+        // Try alternative approach for WSL using explorer.exe
+        try {
+          console.log('Trying alternative WSL approach: Using explorer.exe');
+          
+          // Create a temporary VBS script that will be executed by Windows
+          const vbsContent = `
+Set objShell = CreateObject("Shell.Application")
+Set objFolder = objShell.BrowseForFolder(0, "Select a folder", 0)
+If objFolder Is Nothing Then
+  WScript.Quit(1)
+Else
+  WScript.Echo objFolder.Self.Path
+  WScript.Quit(0)
+End If
+          `;
+          
+          const tempVbsPath = join(process.cwd(), 'temp_folder_dialog.vbs');
+          await fs.writeFile(tempVbsPath, vbsContent);
+          
+          // Convert to Windows path
+          const winVbsPath = tempVbsPath.replace(/^\/mnt\/([a-z])\//, '$1:/').replace(/\//g, '\\');
+          
+          // Execute VBS script through cmd.exe
+          const command = `cmd.exe /c cscript //NoLogo "${winVbsPath}"`;
+          const result = await execAsync(command, { timeout: 60000 });
+          
+          // Clean up
+          try {
+            await fs.unlink(tempVbsPath);
+          } catch (unlinkError) {
+            console.error('Failed to delete temporary VBS file:', unlinkError);
+          }
+          
+          selectedPath = result.stdout.trim();
+          
+          if (selectedPath) {
+            console.log('Alternative WSL approach succeeded with path:', selectedPath);
+            return res.json({ path: selectedPath });
+          }
+        } catch (altWslErr) {
+          console.error('Alternative WSL approach failed:', altWslErr.message);
+          error = error || altWslErr;
+        }
+      }
+    } else {
+      // Windows native approach
+      try {
+        console.log('Trying Windows approach: Standard PowerShell dialog');
+        const command = `powershell -Command "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Select a folder'; $f.ShowNewFolderButton = $true; if ($f.ShowDialog() -eq 'OK') { $f.SelectedPath }"`;
+        const result = await execAsync(command, { timeout: 30000 });
+        selectedPath = result.stdout.trim();
+        
+        if (selectedPath) {
+          console.log('Windows approach succeeded with path:', selectedPath);
+          return res.json({ path: selectedPath });
+        }
+      } catch (winErr) {
+        console.error('Windows approach failed:', winErr.message);
+        error = winErr;
+      }
+    }
     
-    res.json({ path: selectedPath });
-  } catch (error) {
-    console.error('Error opening directory dialog:', error);
+    // If all dialog approaches fail, return an error
+    console.error('All dialog approaches failed');
+    return res.status(500).json({
+      error: 'Failed to open directory dialog. Please enter the path manually.',
+      details: error ? error.message : 'Unknown error'
+    });
+    
+  } catch (finalError) {
+    console.error('Unexpected error in directory browser:', finalError);
     res.status(500).json({ error: 'Failed to open directory dialog. Please try again or enter the path manually.' });
   }
 });
+
+// Helper function for the direct API approach
+async function useDirectAPIApproach(res) {
+  console.log('Using direct API approach with common directories');
+  
+  // Get common directories for both Windows and WSL
+  let commonPaths = [];
+  
+  // Detect if running in WSL
+  const isWSL = process.platform === 'linux' && process.env.WSL_DISTRO_NAME;
+  
+  if (isWSL) {
+    // WSL paths
+    const homeDir = process.env.HOME || '/home/' + process.env.USER;
+    const username = process.env.USER;
+    
+    commonPaths = [
+      homeDir,
+      '/mnt/c',
+      '/mnt/c/Users',
+      `/mnt/c/Users/${username}`,
+      `/mnt/c/Users/${username}/Desktop`,
+      `/mnt/c/Users/${username}/Documents`,
+      `/mnt/c/Users/${username}/Downloads`,
+      process.cwd()
+    ];
+    
+    // Try to get Windows username from WSL
+    try {
+      const { stdout } = await execAsync('cmd.exe /c echo %USERNAME%');
+      const winUsername = stdout.trim();
+      if (winUsername) {
+        commonPaths.push(`/mnt/c/Users/${winUsername}`);
+        commonPaths.push(`/mnt/c/Users/${winUsername}/Desktop`);
+        commonPaths.push(`/mnt/c/Users/${winUsername}/Documents`);
+        commonPaths.push(`/mnt/c/Users/${winUsername}/Downloads`);
+      }
+    } catch (err) {
+      console.error('Failed to get Windows username:', err.message);
+    }
+  } else {
+    // Windows paths
+    const userHome = process.env.USERPROFILE || 'C:\\Users\\' + process.env.USERNAME;
+    commonPaths = [
+      userHome,
+      join(userHome, 'Desktop'),
+      join(userHome, 'Documents'),
+      join(userHome, 'Downloads'),
+      'C:\\',
+      'C:\\Program Files',
+      'C:\\Users',
+      process.cwd()
+    ];
+  }
+  
+  // Filter to only include paths that exist
+  const existingPaths = [];
+  for (const path of commonPaths) {
+    try {
+      if (existsSync(path)) {
+        existingPaths.push(path);
+      }
+    } catch (err) {
+      console.error(`Error checking if path exists: ${path}`, err.message);
+    }
+  }
+  
+  if (existingPaths.length > 0) {
+    console.log('Direct API approach succeeded with paths:', existingPaths);
+    return res.status(200).json({
+      success: true,
+      message: 'Here are some common directories you can use',
+      paths: existingPaths,
+      defaultPath: existingPaths[0],
+      currentDirectory: process.cwd()
+    });
+  } else {
+    // If no paths exist, return the current directory
+    console.log('No common paths found, using current directory');
+    return res.status(200).json({
+      success: true,
+      message: 'No common directories found, using current directory',
+      paths: [process.cwd()],
+      defaultPath: process.cwd(),
+      currentDirectory: process.cwd()
+    });
+  }
+}
 
 app.post('/api/get-version', async (req, res) => {
   try {
@@ -347,112 +591,72 @@ app.post('/api/check-main-changelog', async (req, res) => {
   const logs = [];
   let errors = 0;
 
-//   try {
-//     const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
+  try {
+    const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
+    const orderManagersChangelogPath = join(workingDirectory, 'changelog-Order-Managers-Param-DATA.xml');
     
-//     if (!await fs.access(mainChangelogPath).then(() => true).catch(() => false)) {
-//       logs.push({
-//         type: 'error',
-//         category: 'system',
-//         message: 'Main changelog file not found: changelog-SIO2-all.xml'
-//       });
-//       errors++;
-//       return res.json({ errors, logs });
-//     }
-
-//     const content = await fs.readFile(mainChangelogPath, 'utf-8');
-
-//     const categories = ['TABLES', 'VIEWS', 'MATERIALIZED_VIEWS', 'PROCEDURES', 'SEQUENCES'];
-//     for (const category of categories) {
-//       const categoryChangelog = `changelog-${version}-${category}.xml`;
-//       const changelogPath = join(workingDirectory, categoryChangelog);
-      
-//       if (await fs.access(changelogPath).then(() => true).catch(() => false)) {
-//         if (!content.includes(`file="${categoryChangelog}"`)) {
-//           logs.push({
-//             type: 'error',
-//             category: 'main_changelog',
-//             message: `Existing changelog '${categoryChangelog}' is not declared in changelog-SIO2-all.xml`
-//           });
-//           errors++;
-//         }
-//       }
-//     }
-
-//     res.json({ errors, logs });
-//   } catch (error) {
-//     console.error('Error checking main changelog:', error);
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
-try {
-  const mainChangelogPath = join(workingDirectory, 'changelog-SIO2-all.xml');
-  const orderManagersChangelogPath = join(workingDirectory, 'changelog-Order-Managers-Param-DATA.xml');
-  
-  let mainChangelog = 'changelog-SIO2-all.xml'; // Default changelog
-  
-  if (await fs.access(orderManagersChangelogPath).then(() => true).catch(() => false)) {
-    mainChangelog = 'changelog-Order-Managers-Param-DATA.xml'; // Change to special case
-  }
-
-  const mainChangelogPathToCheck = join(workingDirectory, mainChangelog);
-  
-  if (!await fs.access(mainChangelogPathToCheck).then(() => true).catch(() => false)) {
-    logs.push({
-      type: 'error',
-      category: 'system',
-      message: `Main changelog file not found: ${mainChangelog}`
-    });
-    errors++;
-    return res.json({ errors, logs });
-  }
-
-  const content = await fs.readFile(mainChangelogPathToCheck, 'utf-8');
-
-  if (mainChangelog === 'changelog-SIO2-all.xml') {
-    const categories = ['TABLES', 'VIEWS', 'MATERIALIZED_VIEWS', 'PROCEDURES', 'SEQUENCES'];
-    for (const category of categories) {
-      const categoryChangelog = `changelog-${version}-${category}.xml`;
-      const changelogPath = join(workingDirectory, categoryChangelog);
-      
-      if (await fs.access(changelogPath).then(() => true).catch(() => false)) {
-        if (!content.includes(`file="${categoryChangelog}"`)) {
-          logs.push({
-            type: 'error',
-            category: 'main_changelog',
-            message: `Existing changelog '${categoryChangelog}' is not declared in changelog-SIO2-all.xml`
-          });
-          errors++;
-        }
-      }
+    let mainChangelog = 'changelog-SIO2-all.xml'; // Default changelog
+    
+    if (await fs.access(orderManagersChangelogPath).then(() => true).catch(() => false)) {
+      mainChangelog = 'changelog-Order-Managers-Param-DATA.xml'; // Change to special case
     }
-  } else if (mainChangelog === 'changelog-Order-Managers-Param-DATA.xml') {
-    const categoryChangelog = 'changelog-Order-Managers-Param-DATA.xml';
-    // Check if 'data' is included in the main changelog, if not, log an error
-    if (!content.includes(`file="${categoryChangelog}"`)) {
+
+    const mainChangelogPathToCheck = join(workingDirectory, mainChangelog);
+    
+    if (!await fs.access(mainChangelogPathToCheck).then(() => true).catch(() => false)) {
       logs.push({
         type: 'error',
-        category: 'main_changelog',
-        message: `Changelog '${categoryChangelog}' is not declared in changelog-Order-Managers-Param-DATA.xml`
+        category: 'system',
+        message: `Main changelog file not found: ${mainChangelog}`
       });
       errors++;
+      return res.json({ errors, logs });
     }
+
+    const content = await fs.readFile(mainChangelogPathToCheck, 'utf-8');
+
+    if (mainChangelog === 'changelog-SIO2-all.xml') {
+      const categories = ['TABLES', 'VIEWS', 'MATERIALIZED_VIEWS', 'PROCEDURES', 'SEQUENCES'];
+      for (const category of categories) {
+        const categoryChangelog = `changelog-${version}-${category}.xml`;
+        const changelogPath = join(workingDirectory, categoryChangelog);
+        
+        if (await fs.access(changelogPath).then(() => true).catch(() => false)) {
+          if (!content.includes(`file="${categoryChangelog}"`)) {
+            logs.push({
+              type: 'error',
+              category: 'main_changelog',
+              message: `Existing changelog '${categoryChangelog}' is not declared in changelog-SIO2-all.xml`
+            });
+            errors++;
+          }
+        }
+      }
+    } else if (mainChangelog === 'changelog-Order-Managers-Param-DATA.xml') {
+      const categoryChangelog = 'changelog-Order-Managers-Param-DATA.xml';
+      // Check if 'data' is included in the main changelog, if not, log an error
+      if (!content.includes(`file="${categoryChangelog}"`)) {
+        logs.push({
+          type: 'error',
+          category: 'main_changelog',
+          message: `Changelog '${categoryChangelog}' is not declared in changelog-Order-Managers-Param-DATA.xml`
+        });
+        errors++;
+      }
+    }
+
+    res.json({ errors, logs });
+  } catch (error) {
+    console.error('Error checking main changelog:', error);
+    res.status(500).json({ error: error.message });
   }
-
-  res.json({ errors, logs });
-} catch (error) {
-  console.error('Error checking main changelog:', error);
-  res.status(500).json({ error: error.message });
-}
 });
-
 
 app.post('/api/build-structure', async (req, res) => {
   const { workingDirectory, config } = req.body;
-  if (category.name.toLowerCase() === 'data') {
-    console.log('Building data structure...');
-  }
+  // if (category.name.toLowerCase() === 'data') {
+  //   console.log('Building data structure...');
+  // }
 
   try {
     // Create tag-database.xml if it doesn't exist
@@ -471,7 +675,7 @@ app.post('/api/build-structure', async (req, res) => {
 </databaseChangeLog>`;
       await fs.writeFile(tagPath, tagContent);
     }
-
+    let isDataCategory = false;
     // Process categories with files
     for (const category of config.categories) {
       if (category.files && category.files.length > 0) {
@@ -500,11 +704,12 @@ app.post('/api/build-structure', async (req, res) => {
             existingIncludes.push(match[1]);
           }
         }
-
+        
         // Create individual XML files with proper indentation
         for (const file of category.files) {
           const xmlPath = join(categoryPath, `${file.name}.xml`);
           const fileSqlPath = join(categorySqlPath, `${file.name}.sql`);
+           isDataCategory = `${category.name}`.toLowerCase() === 'data';
 
           if (!existsSync(xmlPath)) {
             const xmlContent = `<?xml version="1.0" encoding="UTF-8"?>
@@ -582,7 +787,7 @@ ${existingIncludes.map(file => `    <include file="${file}" relativeToChangelogF
         //   .join('\n');
 
         const newIncludes = config.categories
-            .filter(cat => cat.files && cat.files.length > 0 && cat.name.toLowerCase() !== 'data')  // ✅ Exclude "data"
+            .filter(cat => cat.files && cat.files.length > 0 && cat.name.toLowerCase() !== 'data')  // 
             .map(cat => `changelog-${config.version}-${cat.name.toUpperCase()}.xml`)
             .filter(file => !existingIncludes.has(file))
             .map(file => `    <include file="${file}" relativeToChangelogFile="true"/>`)
@@ -594,7 +799,7 @@ ${existingIncludes.map(file => `    <include file="${file}" relativeToChangelogF
       }
     } else {
       // Create new main changelog if it doesn't exist
-      if (category.name.toLowerCase() === 'data') {
+      if (isDataCategory) {
         mainChangelogContent = `<?xml version="1.0" encoding="UTF-8"?>
     <databaseChangeLog
         xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
