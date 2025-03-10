@@ -30,10 +30,11 @@ Three main operational modes:
   - Materialized Views
   - Procedures
   - Sequences
+  - NEW : can add you own
 - File upload support
-- Real-time SQL formatting
+- Real-time SQL formatting // not yet handled
 
-#### Install Mode
+#### Install Mode Via Liquibase (jar)
 Organized into three categories:
 
 **Status & Validation**
@@ -92,7 +93,7 @@ Organized into three categories:
 - XML processing (xml2js, xml-formatter)
 - SQL formatting (sql-formatter)
 
-### Infrastructure
+### Infrastructure // need to be updated, may not be working now
 - Docker
 - Docker Compose
 - Liquibase
@@ -107,18 +108,18 @@ Organized into three categories:
 
 1. Clone the repository:
 bash
-git clone [repository-url]
+git clone [[-url](https://github.com/elmehdi/Liquibase-Control-Tower)]
 cd liquibase-ui-manager
 
 
 2. Start the application using Docker Compose:
 bash
-docker-compose up
+docker-compose up // may not work ! use traditional way
 
 
 The application will be available at:
 - Frontend: http://localhost:5173
-- Backend API: http://localhost:3000
+- Backend API: http://localhost:3000 // it needs to be 3000 so kill any 3000 or manually choose a new port.
 
 ### Local Development
 
@@ -169,20 +170,4 @@ Liquibase Container
    - Execute commands based on selected mode
    - Real-time feedback and logs
    - Error handling and recovery options
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Liquibase for providing the database migration framework
-- The React and TypeScript communities for excellent tools and documentation
+## THANK YOU
